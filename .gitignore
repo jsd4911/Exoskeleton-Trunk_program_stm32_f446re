@@ -1,0 +1,12 @@
+# STM32CubeIDE 忽略清單
+Debug/
+Release/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.log
+.mxproject

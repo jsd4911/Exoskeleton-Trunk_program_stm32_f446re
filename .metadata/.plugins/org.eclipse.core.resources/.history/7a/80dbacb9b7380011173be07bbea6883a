@@ -172,7 +172,7 @@ int main(void)
     	  if(error_sum < -2.0f && error_sum < 0.0f) error_sum = -2.0f;
     	  if(error_sum > 2.0f && error_sum > 0.0f) error_sum = 2.0f;
     	  // 🔴 鎖定模式：以按鈕按下的那個瞬間 (target_pos) 為目標進行精準抵抗
-    	  AK10_9_SendCommand(&hcan1, 0x01, target_pos, 0.0f, 1.35f, 0.5f, 0.0f + error_sum);
+    	  AK10_9_SendCommand(&hcan1, 0x01, target_pos, -0.4f, 1.35f, 0.5f, 0.0f + error_sum);
           HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
       }
 

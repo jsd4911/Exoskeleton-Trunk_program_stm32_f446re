@@ -53,6 +53,7 @@ float motor_tor = 0.0f;    // 即時扭矩
 float current_error = 0.0f;//誤差
 static float error_sum = 0.0f;//誤差積分
 volatile float cc = 0.0f;//誤差因子
+float recurrent = 0.0f;//誤差角度反向
 
 // 按下按鈕瞬間要鎖定的「目標位置」
 float target_pos = 0.0f;
@@ -130,27 +131,24 @@ int main(void)
   while (1)
   {
       // --- 1. 偵測藍色按鈕 (B1 / PC13) ---
-	  // --- 1. 偵測藍色按鈕 (B1 / PC13) ---
-	      if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
-	      {
-	          // 【狀態 A：按鈕被按住】
-	          if (is_calibrated == 0)
-	          {
-	              // 第一次按：紀錄站立點
-	              target_pos = motor_pos;
-	              is_calibrated = 1;
-	          }
-	          else
-	          {
-	              // 已經紀錄過：啟動拉起模式
-	              motor_mode = 1;
-	          }
-	      }
-	      else
-	      {
-	          // 【狀態 B：按鈕放開】
-	          motor_mode = 0; // 放開就立刻變回自由模式，讓您可以彎腰
-	      }
+      if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
+      {
+          HAL_Delay(50); // 防彈跳
+          if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
+          {
+        	  if(is_calibrated == 1 ) motor_mode = !motor_mode;
+
+
+              // 🚨 核心邏輯：從透明(0)切換到鎖定(1)的瞬間，統一目標，把目標位置設為變數，確保所有人都看同一個目標
+              if (is_calibrated == 0 ) {
+                  target_pos = motor_pos;
+                  is_calibrated = 1;
+              }
+
+              while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET); // 等待手指放開
+          }
+      }
+
       // --- 2. 執行馬達動作 ---
       if (motor_mode == 0)
       {
@@ -172,7 +170,7 @@ int main(void)
     	  if(error_sum < -2.0f && error_sum < 0.0f) error_sum = -2.0f;
     	  if(error_sum > 2.0f && error_sum > 0.0f) error_sum = 2.0f;
     	  // 🔴 鎖定模式：以按鈕按下的那個瞬間 (target_pos) 為目標進行精準抵抗
-    	  AK10_9_SendCommand(&hcan1, 0x01, target_pos, 0.0f, 1.35f, 0.5f, 0.0f + error_sum);
+    	  AK10_9_SendCommand(&hcan1, 0x01, target_pos, -0.4f, 1.35f, 0.5f, 0.0f + error_sum);
           HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
       }
 

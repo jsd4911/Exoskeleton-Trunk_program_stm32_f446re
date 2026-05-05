@@ -180,7 +180,8 @@ int main(void)
 	                            yaw   = yaw_rad   * 180.0f / 3.14159265f;
 
 	                            // 🌟 見證奇蹟的時刻：印出角度！
-	                            printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+	                            //printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+	                            printf("%.2f,%.2f,%.2f\r\n", roll, pitch, yaw);
 	                        }
 	                    }
 	                }

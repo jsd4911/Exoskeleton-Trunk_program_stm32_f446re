@@ -43,6 +43,8 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
+UART_HandleTypeDef huart3;
+
 /* USER CODE BEGIN PV */
 uint8_t motor_mode = 0;
 uint8_t is_calibrated = 0; // 狀態標籤：0 代表還沒紀錄站立點，1 代表已紀錄
@@ -57,12 +59,24 @@ volatile float cc = 0.0f;//誤差因子
 // 按下按鈕瞬間要鎖定的「目標位置」
 float target_pos = 0.0f;
 
+
+//感測器中斷接收
+uint8_t rx_byte;          // 每次只接 1 個字元，防卡死
+char rx_buffer[50];       // 拼湊完整字串的緩衝區
+uint8_t rx_index = 0;
+
+// 從感測器板解碼出來的最新角度
+float ext_pitch = 0.0f;
+float ext_roll = 0.0f;
+float ext_yaw = 0.0f;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -102,6 +116,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CAN1_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   CAN_FilterTypeDef canfilterconfig;
   canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
@@ -122,6 +137,9 @@ int main(void)
   HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   AK10_9_EnableMotor(&hcan1, 0x01);
+
+  // 啟動 USART3 中斷接收
+  HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -183,6 +201,36 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
+
+/* USER CODE BEGIN 4 */
+// 當 RX 腳位收到任何一個字元，就會瞬間觸發這個函數
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART3)
+    {
+        // 遇到 '\n' 代表感測器的一句話 ("P:-50.2,R:5.0,Y:10.0\n") 講完了
+        if (rx_byte == '\n')
+        {
+            rx_buffer[rx_index] = '\0'; // 封裝字串
+
+            // 🔪 核心解碼：把字串切回小數點數字
+            sscanf(rx_buffer, "P:%f,R:%f,Y:%f", &ext_pitch, &ext_roll, &ext_yaw);
+
+            rx_index = 0; // 歸零，準備接下一句
+        }
+        else
+        {
+            // 把收到的字元存進陣列
+            rx_buffer[rx_index] = rx_byte;
+            rx_index++;
+            if (rx_index >= 50) rx_index = 0; // 防呆機制
+        }
+
+        // 再次啟動中斷，等下一個字元 (非常重要！)
+        HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+    }
+}
+/* USER CODE END 4 */
 
 /**
   * @brief System Clock Configuration
@@ -276,6 +324,39 @@ static void MX_CAN1_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -292,20 +373,20 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  /*Configure GPIO pin : LD2_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

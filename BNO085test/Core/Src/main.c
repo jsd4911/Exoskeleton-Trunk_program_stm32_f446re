@@ -45,6 +45,7 @@
 I2C_HandleTypeDef hi2c1;
 
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
 float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
@@ -65,6 +66,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -77,6 +79,7 @@ int _write(int file, char *ptr, int len) {
     return len;
 }
 /* USER CODE END 0 */
+
 /**
   * @brief  The application entry point.
   * @retval int
@@ -108,6 +111,7 @@ int main(void)
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_Delay(1000);
@@ -180,8 +184,16 @@ int main(void)
 	                            yaw   = yaw_rad   * 180.0f / 3.14159265f;
 
 	                            // 🌟 見證奇蹟的時刻：印出角度！
-	                            //printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
-	                            printf("%.2f,%.2f,%.2f\r\n", roll, pitch, yaw);
+	                            printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+	                            //printf("%.2f,%.2f,%.2f\r\n", roll, pitch, yaw);
+	                            // 2. 👉 新增：打包成字串發送給「馬達板」 (透過 USART3)
+	                            char sync_buf[30];
+	                            // 將角度塞進字串，記得最後一定要有 \n (換行符號)，馬達板才知道這句話講完了
+	                            sprintf(sync_buf, "P:%.1f,R:%.1f,Y:%.1f\n", pitch, roll, yaw);
+
+	                            // 透過 USART3 傳送出去，設定 10ms 的超時保護
+	                            HAL_UART_Transmit(&huart3, (uint8_t*)sync_buf, strlen(sync_buf), 10);
+	                            // 👆 ==============================================================
 	                        }
 	                    }
 	                }
@@ -303,6 +315,39 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -317,6 +362,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);

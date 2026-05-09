@@ -1,0 +1,196 @@
+ST Edge AI Core v2.2.0-20266 2adc00962
+Created date          : 2026-05-09 13:20:51
+Parameters            : generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/exoskeleton_model_V4_Static_fixed.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace25240013285830015751590993383141259 --output C:/Users/user/.stm32cubemx/network_output
+
+Exec/report summary (generate)
+---------------------------------------------------------------------------------------------------------------------------------------------
+model file         :   D:\Exoskeleton Trunk_program\stm32_f446re\BNO085_Second-stage neural network\exoskeleton_model_V4_Static_fixed.onnx   
+type               :   onnx                                                                                                                  
+c_name             :   network                                                                                                               
+compression        :   none                                                                                                                  
+options            :   allocate-inputs, allocate-outputs                                                                                     
+optimization       :   balanced                                                                                                              
+target/series      :   stm32f4                                                                                                               
+workspace dir      :   C:\Users\user\AppData\Local\Temp\mxAI_workspace25240013285830015751590993383141259                                    
+output dir         :   C:\Users\user\.stm32cubemx\network_output                                                                             
+model_fmt          :   float                                                                                                                 
+model_name         :   exoskeleton_model_V4_Static_fixed                                                                                     
+model_hash         :   0x051e2061abb081faab59eed64dffc95c                                                                                    
+params #           :   2,836 items (11.08 KiB)                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------
+input 1/1          :   'input', f32(1x2x10), 80 Bytes, activations                                                                           
+output 1/1         :   'output', f32(1x4), 16 Bytes, activations                                                                             
+macc               :   4,062                                                                                                                 
+weights (ro)       :   11,344 B (11.08 KiB) (1 segment)                                                                                      
+activations (rw)   :   552 B (552 B) (1 segment) *                                                                                           
+ram (total)        :   552 B (552 B) = 552 + 0 + 0                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------
+(*) 'input'/'output' buffers are allocated in the activations buffer
+
+Model name - exoskeleton_model_V4_Static_fixed
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+m_id   layer (type,original)            oshape            param/size        macc   connected to   | c_size          c_macc            c_type             
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+5      fc1_weight (Placeholder, Gemm)   [b:32,c:80]       2,560/10,240                            | +128(+1.2%)     +2,592(+100.0%)   Dense_[2]          
+       fc1_bias (Placeholder, Gemm)     [b:32]            32/128                                  | -128(-100.0%)                     
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+7      fc2_weight (Placeholder, Gemm)   [b:4,c:32]        128/512                                 | +16(+3.1%)      +132(+100.0%)     Dense_[o][4]       
+       fc2_bias (Placeholder, Gemm)     [b:4]             4/16                                    | -16(-100.0%)                      
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+0      input (Input, )                  [b:1,h:10,c:2]                                            |                                   
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+1      conv1d (Conv2D, Conv)            [b:1,h:10,c:16]   112/448            976          input   | -448(-100.0%)   -976(-100.0%)     
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+2      relu (Nonlinearity, Relu)        [b:1,h:10,c:16]                      160         conv1d   |                 -150(-93.8%)      Transpose_[0]      
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+3      max_pool1d (Pool, MaxPool)       [b:1,h:5,c:16]                       160           relu   | +448(+100.0%)   +1,136(+710.0%)   Conv2D_[1]         
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+4      view (Reshape, Reshape)          [b:1,c:80]                                   max_pool1d   |                                   
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+5      linear (Gemm, Gemm)              [b:1,c:32]                         2,592           view   |                 -2,592(-100.0%)   
+                                                                                     fc1_weight   | 
+                                                                                       fc1_bias   | 
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+6      relu_1 (Nonlinearity, Relu)      [b:1,c:32]                            32         linear   |                                   Nonlinearity_[3]   
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+7      output (Gemm, Gemm)              [b:1,c:4]                            132         relu_1   |                 -132(-100.0%)     
+                                                                                     fc2_weight   | 
+                                                                                       fc2_bias   | 
+------ -------------------------------- ----------------- -------------- ------- -------------- --- --------------- ----------------- ------------------ 
+model/c-model: macc=4,052/4,062 +10(+0.2%) weights=11,344/11,344  activations=--/552 io=--/0
+
+
+
+Generated C-graph summary
+------------------------------------------------------------------------------------------------------------------------
+model name            : exoskeleton_model_V4_Static_fixed
+c-name                : network
+c-node #              : 5
+c-array #             : 14
+activations size      : 552 (1 segment)
+weights size          : 11344 (1 segment)
+macc                  : 4062
+inputs                : ['input_output']
+outputs               : ['output_output']
+
+C-Arrays (14)
+------ ------------------------ ------------ ------------------------- ------------- --------- 
+c_id   name (*_array)           item/size    domain/mem-pool           c-type        comment   
+------ ------------------------ ------------ ------------------------- ------------- --------- 
+0      conv1d_bias              16/64        weights/weights           const float             
+1      conv1d_output            80/320       activations/**default**   float                   
+2      conv1d_scratch0          6/24         activations/**default**   float                   
+3      conv1d_scratch1          32/128       activations/**default**   float                   
+4      conv1d_weights           96/384       weights/weights           const float             
+5      input_Transpose_output   20/80        activations/**default**   float                   
+6      input_output             20/80        activations/**default**   float         /input    
+7      linear_bias              32/128       weights/weights           const float             
+8      linear_output            32/128       activations/**default**   float                   
+9      linear_weights           2560/10240   weights/weights           const float             
+10     output_bias              4/16         weights/weights           const float             
+11     output_output            4/16         activations/**default**   float         /output   
+12     output_weights           128/512      weights/weights           const float             
+13     relu_1_output            32/128       activations/**default**   float                   
+------ ------------------------ ------------ ------------------------- ------------- --------- 
+
+C-Layers (5)
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+c_id   name (*_layer)    id   layer_type      macc   rom     tensors                     shape (array id)    
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+0      input_Transpose   2    Transpose       10     0       I: input_output             f32(1x2x10) (6)     
+                                                             O: input_Transpose_output   f32(1x10x2) (5)     
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+1      conv1d            3    Conv2D          1296   448     I: input_Transpose_output   f32(1x10x2) (5)     
+                                                             S: conv1d_scratch0                              
+                                                             S: conv1d_scratch1                              
+                                                             W: conv1d_weights           f32(16x3x1x2) (4)   
+                                                             W: conv1d_bias              f32(16) (0)         
+                                                             O: conv1d_output            f32(1x5x16) (1)     
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+2      linear            5    Dense           2592   10368   I: conv1d_output            f32(1x5x16) (1)     
+                                                             W: linear_weights           f32(32x80) (9)      
+                                                             W: linear_bias              f32(32) (7)         
+                                                             O: linear_output            f32(1x32) (8)       
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+3      relu_1            6    Nonlinearity    32     0       I: linear_output            f32(1x32) (8)       
+                                                             O: relu_1_output            f32(1x32) (13)      
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+4      output            7    Dense           132    528     I: relu_1_output            f32(1x32) (13)      
+                                                             W: output_weights           f32(4x32) (12)      
+                                                             W: output_bias              f32(4) (10)         
+                                                             O: output_output            f32(1x4) (11)       
+------ ----------------- ---- --------------- ------ ------- --------------------------- ------------------- 
+
+
+
+Number of operations per c-layer
+------- ------ ----------------------------- ------- -------------- 
+c_id    m_id   name (type)                       #op           type 
+------- ------ ----------------------------- ------- -------------- 
+0       2      input_Transpose (Transpose)        10   smul_f32_f32 
+1       3      conv1d (Conv2D)                 1,296   smul_f32_f32 
+2       5      linear (Dense)                  2,592   smul_f32_f32 
+3       6      relu_1 (Nonlinearity)              32     op_f32_f32 
+4       7      output (Dense)                    132   smul_f32_f32 
+------- ------ ----------------------------- ------- -------------- 
+total                                          4,062 
+
+Number of operation types
+---------------- ------- ----------- 
+operation type         #           % 
+---------------- ------- ----------- 
+smul_f32_f32       4,030       99.2% 
+op_f32_f32            32        0.8% 
+
+Complexity report (model)
+------ ------------ ------------------------- ------------------------- ------ 
+m_id   name         c_macc                    c_rom                     c_id   
+------ ------------ ------------------------- ------------------------- ------ 
+5      fc1_weight   ||||||||||||||||  63.8%   ||||||||||||||||  91.4%   [2]    
+7      fc2_weight   |                  3.2%   |                  4.7%   [4]    
+2      relu         |                  0.2%   |                  0.0%   [0]    
+3      max_pool1d   ||||||||          31.9%   |                  3.9%   [1]    
+6      relu_1       |                  0.8%   |                  0.0%   [3]    
+------ ------------ ------------------------- ------------------------- ------ 
+macc=4,062 weights=11,344 act=552 ram_io=0
+ 
+ Requested memory size by section - "stm32f4" target
+ ------------------------------ -------- -------- ------- ----- 
+ module                             text   rodata    data   bss 
+ ------------------------------ -------- -------- ------- ----- 
+ NetworkRuntime1020_CM4_GCC.a     10,888        0       0     0 
+ network.o                           556       40   1,920   152 
+ network_data.o                       48       16      88     0 
+ lib (toolchain)*                      0        0       0     0 
+ ------------------------------ -------- -------- ------- ----- 
+ RT total**                       11,492       56   2,008   152 
+ ------------------------------ -------- -------- ------- ----- 
+ weights                               0   11,344       0     0 
+ activations                           0        0       0   552 
+ io                                    0        0       0     0 
+ ------------------------------ -------- -------- ------- ----- 
+ TOTAL                            11,492   11,400   2,008   704 
+ ------------------------------ -------- -------- ------- ----- 
+ *  toolchain objects (libm/libgcc*)
+ ** RT AI runtime objects (kernels+infrastructure)
+  
+  Summary - "stm32f4" target
+  ---------------------------------------------------
+               FLASH (ro)      %*   RAM (rw)       % 
+  ---------------------------------------------------
+  RT total         13,556   54.4%      2,160   79.6% 
+  ---------------------------------------------------
+  TOTAL            24,900              2,712         
+  ---------------------------------------------------
+  *  rt/total
+
+
+Generated files (7)
+----------------------------------------------------------------- 
+C:\Users\user\.stm32cubemx\network_output\network_data_params.h   
+C:\Users\user\.stm32cubemx\network_output\network_data_params.c   
+C:\Users\user\.stm32cubemx\network_output\network_data.h          
+C:\Users\user\.stm32cubemx\network_output\network_data.c          
+C:\Users\user\.stm32cubemx\network_output\network_config.h        
+C:\Users\user\.stm32cubemx\network_output\network.h               
+C:\Users\user\.stm32cubemx\network_output\network.c               

@@ -184,15 +184,18 @@ int main(void)
 	                            yaw   = yaw_rad   * 180.0f / 3.14159265f;
 
 	                            // 🌟 見證奇蹟的時刻：印出角度！
-	                            printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+	                            //printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+
+	                            // 🌟 見證奇蹟的時刻：印出角度！
+	                            printf("%.1f,%.1f,%.1f\r\n", roll, pitch, yaw);
 	                            //printf("%.2f,%.2f,%.2f\r\n", roll, pitch, yaw);
 	                            // 2. 👉 新增：打包成字串發送給「馬達板」 (透過 USART3)
-	                            char sync_buf[30];
+	                            //char sync_buf[30];
 	                            // 將角度塞進字串，記得最後一定要有 \n (換行符號)，馬達板才知道這句話講完了
-	                            sprintf(sync_buf, "P:%.1f,R:%.1f,Y:%.1f\n", pitch, roll, yaw);
+	                            //sprintf(sync_buf, "P:%.1f,R:%.1f,Y:%.1f\n", pitch, roll, yaw);
 
 	                            // 透過 USART3 傳送出去，設定 10ms 的超時保護
-	                            HAL_UART_Transmit(&huart3, (uint8_t*)sync_buf, strlen(sync_buf), 10);
+	                            //HAL_UART_Transmit(&huart3, (uint8_t*)sync_buf, strlen(sync_buf), 10);
 	                            // 👆 ==============================================================
 	                        }
 	                    }

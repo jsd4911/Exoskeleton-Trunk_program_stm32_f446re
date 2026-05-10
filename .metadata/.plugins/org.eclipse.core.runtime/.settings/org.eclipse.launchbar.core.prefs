@@ -1,7 +1,7 @@
 LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/arch=x86_64
 LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/name=Local
 LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/os=win32
-configDescList=org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:AK10_9Test_program Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:myowaretest_M Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:BNO085_AI_Exoskeleton Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:BNO085test Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:BNO085_AI_Exoskeleton_V2
+configDescList=org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:AK10_9Test_program Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:myowaretest_M Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:BNO085test Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:BNO085_AI_Exoskeleton_V2
 eclipse.preferences.version=1
 org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:AK10_9Test_program\ Debug/activeLaunchMode=run
 org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:AK10_9Test_program\ Debug/activeLaunchTarget=null\:---

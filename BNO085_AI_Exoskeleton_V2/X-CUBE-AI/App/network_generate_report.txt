@@ -1,6 +1,6 @@
 ST Edge AI Core v2.2.0-20266 2adc00962
-Created date          : 2026-05-09 13:20:51
-Parameters            : generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/exoskeleton_model_V4_Static_fixed.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace25240013285830015751590993383141259 --output C:/Users/user/.stm32cubemx/network_output
+Created date          : 2026-05-10 14:13:54
+Parameters            : generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/exoskeleton_model_V4_Static_fixed.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace34198141485810015918035704152342577 --output C:/Users/user/.stm32cubemx/network_output
 
 Exec/report summary (generate)
 ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -11,7 +11,7 @@ compression        :   none
 options            :   allocate-inputs, allocate-outputs                                                                                     
 optimization       :   balanced                                                                                                              
 target/series      :   stm32f4                                                                                                               
-workspace dir      :   C:\Users\user\AppData\Local\Temp\mxAI_workspace25240013285830015751590993383141259                                    
+workspace dir      :   C:\Users\user\AppData\Local\Temp\mxAI_workspace34198141485810015918035704152342577                                    
 output dir         :   C:\Users\user\.stm32cubemx\network_output                                                                             
 model_fmt          :   float                                                                                                                 
 model_name         :   exoskeleton_model_V4_Static_fixed                                                                                     

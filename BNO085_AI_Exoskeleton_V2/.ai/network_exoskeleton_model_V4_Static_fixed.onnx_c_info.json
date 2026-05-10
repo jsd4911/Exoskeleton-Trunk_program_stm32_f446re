@@ -409,44 +409,44 @@
   ],
   "environment": {
     "generated_model": {
-      "generated_time": "2026-05-09T13:20:51+0800",
+      "generated_time": "2026-05-10T14:13:54+0800",
       "model_files": [
         {
           "name": "network_data_params.h",
-          "signature": "0xa680f0c32492e3e6df80acccd9a20d63"
+          "signature": "0x8455ef557b4674b0f7419cc23ff90be3"
         },
         {
           "name": "network_data_params.c",
-          "signature": "0xb1c3374be1fd239697787f876d8907c3"
+          "signature": "0x78add70cad1de1e3a2973212c4d114f5"
         },
         {
           "name": "network_data.h",
-          "signature": "0x38288c7c447bb92edde1deeb4e0a833a"
+          "signature": "0x454a145bdc23207b4fa2d535d7ad4924"
         },
         {
           "name": "network_data.c",
-          "signature": "0x7e334da981c1f5f6ef68a9f64ffcd3b2"
+          "signature": "0x3e0b1ec97f32dd4e05ac4c19ae4b9768"
         },
         {
           "name": "network_config.h",
-          "signature": "0xb471007fdd5cbf3045b4c20d1203b27b"
+          "signature": "0xb55dc165881419d8e699aecca78c9787"
         },
         {
           "name": "network.h",
-          "signature": "0xc5f2b06d240b207c35f031d7e97382a1"
+          "signature": "0x719f7c636962fdd96cf6efdeefa4850f"
         },
         {
           "name": "network.c",
-          "signature": "0x7a3d873cf7b4fa4aef5de56ee526447d"
+          "signature": "0xd08d3276fba84b67fff796122ddc8dcc"
         }
       ],
       "name": "network"
     },
-    "network_signature": "0x50ed32e074f65eb4",
+    "network_signature": "0xf8bb0bfb3520acec",
     "test_name": "",
     "tools": [
       {
-        "arguments": "generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/exoskeleton_model_V4_Static_fixed.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace25240013285830015751590993383141259 --output C:/Users/user/.stm32cubemx/network_output",
+        "arguments": "generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/exoskeleton_model_V4_Static_fixed.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace34198141485810015918035704152342577 --output C:/Users/user/.stm32cubemx/network_output",
         "environment": [
           "STATS_TYPE=X-CUBE-AI"
         ],

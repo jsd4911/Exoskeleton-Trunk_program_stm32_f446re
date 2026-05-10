@@ -192,19 +192,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  // ==========================================
-	        // 🔘 實體按鈕偵測：按下藍色按鈕，強制重新歸零！
-	        // (Nucleo 藍色按鈕預設按下時是 LOW / RESET)
-	        // ==========================================
-	        if (HAL_GPIO_ReadPin(USER_BTN_GPIO_Port, USER_BTN_Pin) == GPIO_PIN_RESET) {
-	            is_calibrated = 0;   // 把校正標籤撕掉，讓程式在下一次讀取時重新抓取 offset
-	            window_index = 0;    // 清空 AI 的大腦記憶體
-
-	            char msg[] = "\r\n!!! 收到按鈕指令：強制重新歸零 !!!\r\n";
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
-
-	            HAL_Delay(500);      // 防彈跳延遲 (Debounce)，避免按一次被誤認為按很多次
-	        }
 	  // --- 任務 A：自動喚醒機制 ---
 	        // 如果還沒收到資料，每 2 秒瘋狂敲門一次
 	        if (isStreaming == 0 && (HAL_GetTick() - lastCmdTick > 2000)) {

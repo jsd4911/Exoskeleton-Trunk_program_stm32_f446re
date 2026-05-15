@@ -1,0 +1,255 @@
+ST Edge AI Core v2.2.0-20266 2adc00962
+Created date          : 2026-05-15 21:31:32
+Parameters            : generate --target stm32f4 --name network -m D:/Exoskeleton Trunk_program/stm32_f446re/BNO085_Second-stage neural network/V7_MultiTask_Model_fix.onnx --compression none --verbosity 1 --workspace C:/Users/user/AppData/Local/Temp/mxAI_workspace8002295809154001553956020602744115 --output C:/Users/user/.stm32cubemx/network_output
+
+Exec/report summary (generate)
+----------------------------------------------------------------------------------------------------------------------------------
+model file         :   D:\Exoskeleton Trunk_program\stm32_f446re\BNO085_Second-stage neural network\V7_MultiTask_Model_fix.onnx   
+type               :   onnx                                                                                                       
+c_name             :   network                                                                                                    
+compression        :   none                                                                                                       
+options            :   allocate-inputs, allocate-outputs                                                                          
+optimization       :   balanced                                                                                                   
+target/series      :   stm32f4                                                                                                    
+workspace dir      :   C:\Users\user\AppData\Local\Temp\mxAI_workspace8002295809154001553956020602744115                          
+output dir         :   C:\Users\user\.stm32cubemx\network_output                                                                  
+model_fmt          :   float                                                                                                      
+model_name         :   V7_MultiTask_Model_fix                                                                                     
+model_hash         :   0x30622cebbf468f7724a7f660b889bf1e                                                                         
+params #           :   12,956 items (50.61 KiB)                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------
+input 1/1          :   'input_6_features', f32(1x6x10), 240 Bytes, activations                                                    
+output 1/3         :   'out_move', f32(1x2), 8 Bytes, activations                                                                 
+output 2/3         :   'out_bend', f32(1x7), 28 Bytes, activations                                                                
+output 3/3         :   'out_speed', f32(1x3), 12 Bytes, activations                                                               
+outputs (total)    :   48 Bytes                                                                                                   
+macc               :   22,266                                                                                                     
+weights (ro)       :   51,824 B (50.61 KiB) (1 segment)                                                                           
+activations (rw)   :   1,152 B (1.12 KiB) (1 segment) *                                                                           
+ram (total)        :   1,152 B (1.12 KiB) = 1,152 + 0 + 0                                                                         
+----------------------------------------------------------------------------------------------------------------------------------
+(*) 'input'/'output' buffers are allocated in the activations buffer
+
+Model name - V7_MultiTask_Model_fix
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+m_id   layer (type,original)                   oshape            param/size          macc        connected to   | c_size            c_macc             c_type             
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+7      fc_shared_weight (Placeholder, Gemm)    [b:64,c:160]      10,240/40,960                                  | +256(+0.6%)       +10,304(+100.0%)   Dense_[4]          
+       fc_shared_bias (Placeholder, Gemm)      [b:64]            64/256                                         | -256(-100.0%)                        
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+9      head_move_weight (Placeholder, Gemm)    [b:2,c:64]        128/512                                        | +8(+1.6%)         +130(+100.0%)      Dense_[o][6]       
+       head_move_bias (Placeholder, Gemm)      [b:2]             2/8                                            | -8(-100.0%)                          
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+10     head_bend_weight (Placeholder, Gemm)    [b:7,c:64]        448/1,792                                      | +28(+1.6%)        +455(+100.0%)      Dense_[o][7]       
+       head_bend_bias (Placeholder, Gemm)      [b:7]             7/28                                           | -28(-100.0%)                         
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+11     head_speed_weight (Placeholder, Gemm)   [b:3,c:64]        192/768                                        | +12(+1.6%)        +195(+100.0%)      Dense_[o][8]       
+       head_speed_bias (Placeholder, Gemm)     [b:3]             3/12                                           | -12(-100.0%)                         
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+0      input_6_features (Input, )              [b:1,h:10,c:6]                                                   |                                      
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+1      conv1d (Conv2D, Conv)                   [b:1,h:10,c:16]   304/1,216          2,896    input_6_features   | -1,216(-100.0%)   -2,896(-100.0%)    
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+2      relu (Nonlinearity, Relu)               [b:1,h:10,c:16]                        160              conv1d   |                   -130(-81.2%)       Transpose_[0]      
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+3      max_pool1d (Pool, MaxPool)              [b:1,h:5,c:16]                         160                relu   | +1,216(+100.0%)   +3,056(+1910.0%)   Conv2D_[1]         
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+4      conv1d_1 (Conv2D, Conv)                 [b:1,h:5,c:32]    1,568/6,272        7,712          max_pool1d   |                                      Conv2D_[2]         
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+5      relu_1 (Nonlinearity, Relu)             [b:1,h:5,c:32]                         160            conv1d_1   |                                      Nonlinearity_[3]   
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+6      view (Reshape, Reshape)                 [b:1,c:160]                                             relu_1   |                                      
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+7      linear (Gemm, Gemm)                     [b:1,c:64]                          10,304                view   |                   -10,304(-100.0%)   
+                                                                                             fc_shared_weight   | 
+                                                                                               fc_shared_bias   | 
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+8      relu_2 (Nonlinearity, Relu)             [b:1,c:64]                              64              linear   |                                      Nonlinearity_[5]   
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+9      out_move (Gemm, Gemm)                   [b:1,c:2]                              130              relu_2   |                   -130(-100.0%)      
+                                                                                             head_move_weight   | 
+                                                                                               head_move_bias   | 
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+10     out_bend (Gemm, Gemm)                   [b:1,c:7]                              455              relu_2   |                   -455(-100.0%)      
+                                                                                             head_bend_weight   | 
+                                                                                               head_bend_bias   | 
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+11     out_speed (Gemm, Gemm)                  [b:1,c:3]                              195              relu_2   |                   -195(-100.0%)      
+                                                                                            head_speed_weight   | 
+                                                                                              head_speed_bias   | 
+------ --------------------------------------- ----------------- --------------- -------- ------------------- --- ----------------- ------------------ ------------------ 
+model/c-model: macc=22,236/22,266 +30(+0.1%) weights=51,824/51,824  activations=--/1,152 io=--/0
+
+
+
+Generated C-graph summary
+------------------------------------------------------------------------------------------------------------------------
+model name            : V7_MultiTask_Model_fix
+c-name                : network
+c-node #              : 9
+c-array #             : 25
+activations size      : 1152 (1 segment)
+weights size          : 51824 (1 segment)
+macc                  : 22266
+inputs                : ['input_6_features_output']
+outputs               : ['out_move_output', 'out_bend_output', 'out_speed_output']
+
+C-Arrays (25)
+------ ----------------------------------- ------------- ------------------------- ------------- --------- 
+c_id   name (*_array)                      item/size     domain/mem-pool           c-type        comment   
+------ ----------------------------------- ------------- ------------------------- ------------- --------- 
+0      conv1d_1_bias                       32/128        weights/weights           const float             
+1      conv1d_1_output                     160/640       activations/**default**   float                   
+2      conv1d_1_scratch0                   48/192        activations/**default**   float                   
+3      conv1d_1_weights                    1536/6144     weights/weights           const float             
+4      conv1d_bias                         16/64         weights/weights           const float             
+5      conv1d_output                       80/320        activations/**default**   float                   
+6      conv1d_scratch0                     18/72         activations/**default**   float                   
+7      conv1d_scratch1                     32/128        activations/**default**   float                   
+8      conv1d_weights                      288/1152      weights/weights           const float             
+9      input_6_features_Transpose_output   60/240        activations/**default**   float                   
+10     input_6_features_output             60/240        activations/**default**   float         /input    
+11     linear_bias                         64/256        weights/weights           const float             
+12     linear_output                       64/256        activations/**default**   float                   
+13     linear_weights                      10240/40960   weights/weights           const float             
+14     out_bend_bias                       7/28          weights/weights           const float             
+15     out_bend_output                     7/28          activations/**default**   float         /output   
+16     out_bend_weights                    448/1792      weights/weights           const float             
+17     out_move_bias                       2/8           weights/weights           const float             
+18     out_move_output                     2/8           activations/**default**   float         /output   
+19     out_move_weights                    128/512       weights/weights           const float             
+20     out_speed_bias                      3/12          weights/weights           const float             
+21     out_speed_output                    3/12          activations/**default**   float         /output   
+22     out_speed_weights                   192/768       weights/weights           const float             
+23     relu_1_output                       160/640       activations/**default**   float                   
+24     relu_2_output                       64/256        activations/**default**   float                   
+------ ----------------------------------- ------------- ------------------------- ------------- --------- 
+
+C-Layers (9)
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+c_id   name (*_layer)               id   layer_type      macc    rom     tensors                                shape (array id)     
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+0      input_6_features_Transpose   2    Transpose       30      0       I: input_6_features_output             f32(1x6x10) (10)     
+                                                                         O: input_6_features_Transpose_output   f32(1x10x6) (9)      
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+1      conv1d                       3    Conv2D          3216    1216    I: input_6_features_Transpose_output   f32(1x10x6) (9)      
+                                                                         S: conv1d_scratch0                                          
+                                                                         S: conv1d_scratch1                                          
+                                                                         W: conv1d_weights                      f32(16x3x1x6) (8)    
+                                                                         W: conv1d_bias                         f32(16) (4)          
+                                                                         O: conv1d_output                       f32(1x5x16) (5)      
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+2      conv1d_1                     4    Conv2D          7712    6272    I: conv1d_output                       f32(1x5x16) (5)      
+                                                                         S: conv1d_1_scratch0                                        
+                                                                         W: conv1d_1_weights                    f32(32x3x1x16) (3)   
+                                                                         W: conv1d_1_bias                       f32(32) (0)          
+                                                                         O: conv1d_1_output                     f32(1x5x32) (1)      
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+3      relu_1                       5    Nonlinearity    160     0       I: conv1d_1_output                     f32(1x5x32) (1)      
+                                                                         O: relu_1_output                       f32(1x5x32) (23)     
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+4      linear                       7    Dense           10304   41216   I: relu_1_output                       f32(1x5x32) (23)     
+                                                                         W: linear_weights                      f32(64x160) (13)     
+                                                                         W: linear_bias                         f32(64) (11)         
+                                                                         O: linear_output                       f32(1x64) (12)       
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+5      relu_2                       8    Nonlinearity    64      0       I: linear_output                       f32(1x64) (12)       
+                                                                         O: relu_2_output                       f32(1x64) (24)       
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+6      out_move                     9    Dense           130     520     I: relu_2_output                       f32(1x64) (24)       
+                                                                         W: out_move_weights                    f32(2x64) (19)       
+                                                                         W: out_move_bias                       f32(2) (17)          
+                                                                         O: out_move_output                     f32(1x2) (18)        
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+7      out_bend                     10   Dense           455     1820    I: relu_2_output                       f32(1x64) (24)       
+                                                                         W: out_bend_weights                    f32(7x64) (16)       
+                                                                         W: out_bend_bias                       f32(7) (14)          
+                                                                         O: out_bend_output                     f32(1x7) (15)        
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+8      out_speed                    11   Dense           195     780     I: relu_2_output                       f32(1x64) (24)       
+                                                                         W: out_speed_weights                   f32(3x64) (22)       
+                                                                         W: out_speed_bias                      f32(3) (20)          
+                                                                         O: out_speed_output                    f32(1x3) (21)        
+------ ---------------------------- ---- --------------- ------- ------- -------------------------------------- -------------------- 
+
+
+
+Number of operations per c-layer
+------- ------ ---------------------------------------- -------- -------------- 
+c_id    m_id   name (type)                                   #op           type 
+------- ------ ---------------------------------------- -------- -------------- 
+0       2      input_6_features_Transpose (Transpose)         30   smul_f32_f32 
+1       3      conv1d (Conv2D)                             3,216   smul_f32_f32 
+2       4      conv1d_1 (Conv2D)                           7,712   smul_f32_f32 
+3       5      relu_1 (Nonlinearity)                         160     op_f32_f32 
+4       7      linear (Dense)                             10,304   smul_f32_f32 
+5       8      relu_2 (Nonlinearity)                          64     op_f32_f32 
+6       9      out_move (Dense)                              130   smul_f32_f32 
+7       10     out_bend (Dense)                              455   smul_f32_f32 
+8       11     out_speed (Dense)                             195   smul_f32_f32 
+------- ------ ---------------------------------------- -------- -------------- 
+total                                                     22,266 
+
+Number of operation types
+---------------- -------- ----------- 
+operation type          #           % 
+---------------- -------- ----------- 
+smul_f32_f32       22,042       99.0% 
+op_f32_f32            224        1.0% 
+
+Complexity report (model)
+------ ------------------- ------------------------- ------------------------- ------ 
+m_id   name                c_macc                    c_rom                     c_id   
+------ ------------------- ------------------------- ------------------------- ------ 
+7      fc_shared_weight    ||||||||||||||||  46.3%   ||||||||||||||||  79.5%   [4]    
+9      head_move_weight    |                  0.6%   |                  1.0%   [6]    
+10     head_bend_weight    |                  2.0%   |                  3.5%   [7]    
+11     head_speed_weight   |                  0.9%   |                  1.5%   [8]    
+2      relu                |                  0.1%   |                  0.0%   [0]    
+3      max_pool1d          |||||             14.4%   |                  2.3%   [1]    
+4      conv1d_1            ||||||||||||      34.6%   |||               12.1%   [2]    
+5      relu_1              |                  0.7%   |                  0.0%   [3]    
+8      relu_2              |                  0.3%   |                  0.0%   [5]    
+------ ------------------- ------------------------- ------------------------- ------ 
+macc=22,266 weights=51,824 act=1,152 ram_io=0
+ 
+ Requested memory size by section - "stm32f4" target
+ ------------------------------ -------- -------- ------- ------- 
+ module                             text   rodata    data     bss 
+ ------------------------------ -------- -------- ------- ------- 
+ NetworkRuntime1020_CM4_GCC.a     12,960        0       0       0 
+ network.o                           776       72   3,196     272 
+ network_data.o                       48       16      88       0 
+ lib (toolchain)*                      0        0       0       0 
+ ------------------------------ -------- -------- ------- ------- 
+ RT total**                       13,784       88   3,284     272 
+ ------------------------------ -------- -------- ------- ------- 
+ weights                               0   51,824       0       0 
+ activations                           0        0       0   1,152 
+ io                                    0        0       0       0 
+ ------------------------------ -------- -------- ------- ------- 
+ TOTAL                            13,784   51,912   3,284   1,424 
+ ------------------------------ -------- -------- ------- ------- 
+ *  toolchain objects (libm/libgcc*)
+ ** RT AI runtime objects (kernels+infrastructure)
+  
+  Summary - "stm32f4" target
+  ---------------------------------------------------
+               FLASH (ro)      %*   RAM (rw)       % 
+  ---------------------------------------------------
+  RT total         17,156   24.9%      3,556   75.5% 
+  ---------------------------------------------------
+  TOTAL            68,980              4,708         
+  ---------------------------------------------------
+  *  rt/total
+
+
+Generated files (7)
+----------------------------------------------------------------- 
+C:\Users\user\.stm32cubemx\network_output\network_data_params.h   
+C:\Users\user\.stm32cubemx\network_output\network_data_params.c   
+C:\Users\user\.stm32cubemx\network_output\network_data.h          
+C:\Users\user\.stm32cubemx\network_output\network_data.c          
+C:\Users\user\.stm32cubemx\network_output\network_config.h        
+C:\Users\user\.stm32cubemx\network_output\network.h               
+C:\Users\user\.stm32cubemx\network_output\network.c               

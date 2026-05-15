@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Delete resource &apos;BNO085_AI_Exoskeleton_V6&apos;" deleteContents="true" description="Delete resource &apos;BNO085_AI_Exoskeleton_V6&apos;" element1="/BNO085_AI_Exoskeleton_V6" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="1" stamp="1778853796201"/>
+</session>

@@ -1,0 +1,66 @@
+Configuration	AK10_9Test_program
+STM32CubeMX 	6.15.0
+Date	05/31/2026
+MCU	STM32F446RETx
+
+
+
+PERIPHERALS	MODES	FUNCTIONS	PINS
+CAN1	Activated	CAN1_RX	PA11
+CAN1	Activated	CAN1_TX	PA12
+SYS	SysTick	SYS_VS_Systick	VP_SYS_VS_Systick
+USART3	Asynchronous	USART3_RX	PC11
+USART3	Asynchronous	USART3_TX	PC10
+
+
+
+Pin Nb	PINs	FUNCTIONs	LABELs
+2	PC13	GPIO_Input	B1
+21	PA5	GPIO_Output	LD2
+44	PA11	CAN1_RX	
+45	PA12	CAN1_TX	
+51	PC10	USART3_TX	
+52	PC11	USART3_RX	
+PERIPHERALS	MODES	FUNCTIONS	PINS
+CAN1	Activated	CAN1_RX	PA11
+CAN1	Activated	CAN1_TX	PA12
+SYS	SysTick	SYS_VS_Systick	VP_SYS_VS_Systick
+USART3	Asynchronous	USART3_RX	PC11
+USART3	Asynchronous	USART3_TX	PC10
+
+
+
+Pin Nb	PINs	FUNCTIONs	LABELs
+2	PC13	GPIO_Input	B1
+21	PA5	GPIO_Output	LD2
+44	PA11	CAN1_RX	
+45	PA12	CAN1_TX	
+51	PC10	USART3_TX	
+52	PC11	USART3_RX	
+
+
+
+SOFTWARE PROJECT
+
+Project Settings : 
+Project Name : AK10_9Test_program
+Project Folder : D:\Exoskeleton Trunk_program\stm32_f446re\AK10_9Test_program
+Toolchain / IDE : STM32CubeIDE
+Firmware Package Name and Version : STM32Cube FW_F4 V1.28.3
+
+
+Code Generation Settings : 
+STM32Cube MCU packages and embedded software packs : Copy only the necessary library files
+Generate peripheral initialization as a pair of '.c/.h' files per peripheral : No
+Backup previously generated files when re-generating : No
+Delete previously generated files when not re-generated : Yes
+Set all free pins as analog (to optimize the power consumption) : No
+
+
+Toolchains Settings : 
+Compiler Optimizations : 
+
+
+
+
+

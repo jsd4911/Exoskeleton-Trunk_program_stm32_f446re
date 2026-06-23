@@ -1,0 +1,655 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <math.h>
+#include "AK10_9_Driver.h"
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+CAN_HandleTypeDef hcan1;
+CAN_HandleTypeDef hcan2;
+
+UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart3_rx;
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_CAN1_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_CAN2_Init(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+// 🌟 儲存馬達回傳的真實角度 (單位: 弧度 Radian)
+float motorA_actual_pos = 0.0f;
+float motorB_actual_pos = 0.0f;
+
+// 儲存馬達的開機初始位置
+float motorA_offset = 0.0f;
+int is_motorA_offset_set = 0;
+float motorB_offset = 0.0f;
+int is_motorB_offset_set = 0;
+// 接收大腦板資料的緩衝區 (8 個 bytes)
+uint8_t rx_buffer[13];
+
+// 🌟 防抽動升級 1：將初始目標改為「水平伸直」(對應馬達 0 度)
+// 這裡是非常關鍵的修改！L1(0.15) + L2(0.20) = 0.35
+float target_X = 0.35f;
+float target_Y = 0.0f;
+
+// 🌟 防抽動升級 2：新增「平滑座標」緩衝變數
+float smooth_X = 0.35f;
+float smooth_Y = 0.0f;
+
+// 機構常數 (圖紙上的 15cm 與 20cm)
+const float L1 = 0.15f;
+const float L2 = 0.20f;
+
+const float g = 9.81f;       // 重力加速度
+const float m_B = 0.5f;      // 假設連桿加上末端負載大約 0.5 公斤 (請依實際情況調整！)
+
+float current_Kp = 0.0f; // 開機預設剛性為 0
+const float MAX_Kp = 0.2f; // 您最終想要的工作剛性
+
+// 共用體 (維持在全域變數區)
+union {
+    uint8_t bytes[4];
+    float fval;
+} data_converter;
+
+// 把 printf 導向 USART2 (也就是通往電腦 COM5 的 USB)
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, 100);
+    return len;
+}
+
+
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_CAN1_Init();
+  MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
+  MX_CAN2_Init();
+  /* USER CODE BEGIN 2 */
+
+    //向編譯器宣告這個結構體
+    CAN_FilterTypeDef sFilterConfig;
+    sFilterConfig.FilterBank = 0;
+    sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+    sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+    sFilterConfig.FilterIdHigh = 0x0000;
+    sFilterConfig.FilterIdLow = 0x0000;
+    sFilterConfig.FilterMaskIdHigh = 0x0000;
+    sFilterConfig.FilterMaskIdLow = 0x0000;
+    sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+    sFilterConfig.FilterActivation = ENABLE;
+    sFilterConfig.SlaveStartFilterBank = 14; // 非常重要：告訴系統 14 號以後是給 CAN2 用的
+
+    HAL_CAN_ConfigFilter(&hcan1, &sFilterConfig);
+    HAL_CAN_Start(&hcan1);
+    HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+    // --- 設定 CAN2 過濾器 (給 B 馬達) ---
+    sFilterConfig.FilterBank = 14; // CAN2 從 14 號開始
+    HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig);
+    HAL_CAN_Start(&hcan2);
+    HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+    AK10_9_EnableMotor(&hcan1, 0x01);
+    HAL_Delay(10);  // 給馬達晶片 10 毫秒的反應時間，避免指令擠在一起
+    AK10_9_EnableMotor(&hcan2, 0x01);
+    HAL_Delay(10);
+
+    // 給馬達一點時間進入控制模式
+    HAL_Delay(100);
+
+    // 🚀 關鍵升級：啟動 UART DMA 背景接收
+    HAL_UART_Receive_DMA(&huart3, rx_buffer, 13);
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+	  // 🌟 把它們的「出生證明」補回來，放在迴圈最上面最安全！
+	    static int is_brain_ready = 0;
+	    static int timeout_counter = 0;
+	    static float current_pitch = 0.0f; // 🌟 補上出生證明：用來記憶當下的彎腰角度
+
+	    // 🌟 新增：彎腰狀態機定義
+	    typedef enum {
+	        STATE_IDLE = 0,         // 站立閒置
+	        STATE_BENDING_DOWN = 1, // 彎腰下去
+	        STATE_RETURNING_UP = 2, // 起身拉起
+	        STATE_HOLDING = 3       // 彎腰懸停
+	    } StoopState;
+
+	    static StoopState current_state = STATE_IDLE;
+	    static float last_pitch = 0.0f; // 用來計算 Delta_Pitch
+	  	  // 🌟 加上這三行「心肺復甦術」：只要 UART 閒置罷工，就立刻強制它重新接收 13 Bytes！
+	        	if (huart3.RxState == HAL_UART_STATE_READY) {
+	        		HAL_UART_Receive_DMA(&huart3, rx_buffer, 13);
+	        	}
+
+
+	            if (huart3.ErrorCode != HAL_UART_ERROR_NONE) {
+	                HAL_UART_AbortReceive(&huart3);
+	                __HAL_UART_CLEAR_OREFLAG(&huart3);
+	                __HAL_UART_CLEAR_NEFLAG(&huart3);
+	                __HAL_UART_CLEAR_FEFLAG(&huart3);
+	                huart3.ErrorCode = HAL_UART_ERROR_NONE;
+	                HAL_UART_Receive_DMA(&huart3, rx_buffer, 13); // 這裡也要改成 13
+	            }
+
+	            int header_idx = -1;
+	            // 🌟 環形掃描器：尋找 13 Bytes 封包的開頭與結尾
+	            // 無論 DMA 從哪裡開始切斷，我們都一定能找出完美的封包
+	            for(int i=0; i<13; i++) {
+	                if(rx_buffer[i] == 0xAA &&
+	                   rx_buffer[(i+1)%13] == 0x55 &&
+	                   rx_buffer[(i+11)%13] == 0x0D &&
+	                   rx_buffer[(i+12)%13] == 0x0A) {
+	                    header_idx = i;
+	                    break;
+	                }
+	            }
+
+
+
+
+	            if (header_idx != -1) {
+	                // 抽出第 3 個 Byte (狀態碼)
+	                uint8_t status = rx_buffer[(header_idx + 2) % 13];
+
+	                // 完美還原 X 與 Y 的浮點數
+	                data_converter.bytes[0] = rx_buffer[(header_idx + 3) % 13];
+	                data_converter.bytes[1] = rx_buffer[(header_idx + 4) % 13];
+	                data_converter.bytes[2] = rx_buffer[(header_idx + 5) % 13];
+	                data_converter.bytes[3] = rx_buffer[(header_idx + 6) % 13];
+	                float temp_X = data_converter.fval;
+
+	                data_converter.bytes[0] = rx_buffer[(header_idx + 7) % 13];
+	                data_converter.bytes[1] = rx_buffer[(header_idx + 8) % 13];
+	                data_converter.bytes[2] = rx_buffer[(header_idx + 9) % 13];
+	                data_converter.bytes[3] = rx_buffer[(header_idx + 10) % 13];
+	                float temp_Y = data_converter.fval;
+
+	                // 只有大腦說「我準備好了」，才允許更新座標
+	                	                if (status == 1) {
+	                                        // 🌟 把大腦板傳來的第一個浮點數 (原本的 temp_X) 當作 Pitch！
+	                                        current_pitch = temp_X;
+	                                        is_brain_ready = 1;
+	                                        timeout_counter = 0; // 收到正確指令，計數器歸零
+	                	                } else {
+	                	                    is_brain_ready = 0; // 大腦還在暖機中
+	                	                }
+	            } else {
+	                timeout_counter++;
+	                if (timeout_counter > 500) { // 50ms 沒收到完整封包，視為斷線
+	                    is_brain_ready = 0;
+	                }
+	            }
+
+	            // 🌟 補上宣告，預設出力為 0
+	            float tau_ff_A = 0.0f;
+	            // 🛡️ 終極防護罩機制與狀態機
+	            	            if (!is_brain_ready) {
+	            	                current_Kp = 0.0f;
+	            	                tau_ff_A = 0.0f;
+	            	                current_state = STATE_IDLE;
+	            	            } else {
+	            	                // 🌟 核心升級：基於 CSV 數據的四階段狀態機
+	            	                // 計算角速度 (Delta)
+	            	                float delta_pitch = current_pitch - last_pitch;
+	            	                last_pitch = current_pitch;
+
+	            	                // --- 狀態判斷 ---
+	            	                if (current_pitch < 15.0f) {
+	            	                    current_state = STATE_IDLE;
+	            	                } else if (current_pitch > 60.0f && fabs(delta_pitch) < 0.2f) {
+	            	                    // 角度大於 60 度，且角速度極小 (趨近靜止)
+	            	                    current_state = STATE_HOLDING;
+	            	                } else if (delta_pitch > 0.2f) {
+	            	                    // 角度增加中
+	            	                    current_state = STATE_BENDING_DOWN;
+	            	                } else if (delta_pitch < -0.2f) {
+	            	                    // 角度減少中
+	            	                    current_state = STATE_RETURNING_UP;
+	            	                }
+
+	            	                // --- 狀態執行：動態剛性 (Kp) 與 助力扭力 (Tau_ff) ---
+	            	                switch (current_state) {
+	            	                    case STATE_IDLE:
+	            	                        // 站立時：馬達維持極低剛性，不干擾走路
+	            	                        current_Kp = 0.5f;
+	            	                        tau_ff_A = 0.0f;
+	            	                        break;
+
+	            	                    case STATE_BENDING_DOWN:
+	            	                        // 下彎時：給予適當的「對抗重力」支撐，讓使用者慢慢下去不會閃到腰
+	            	                        current_Kp = 1.0f;
+	            	                        tau_ff_A = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) * 0.5f; // 50% 重力補償
+	            	                        break;
+
+	            	                    case STATE_HOLDING:
+	            	                        // 彎腰懸停搬重物時：剛性鎖定到最高，給予最大支撐！
+	            	                        current_Kp = 3.0f;
+	            	                        tau_ff_A = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f); // 100% 重力補償
+	            	                        break;
+
+	            	                    case STATE_RETURNING_UP:
+	            	                        // 起身時：給予強大的額外「拉起助力」，幫忙對抗重物
+	            	                        current_Kp = 1.5f;
+	            	                        tau_ff_A = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) + 2.0f; // 補償 + 額外 2.0Nm 助力
+	            	                        break;
+	            	                }
+	            	            }
+
+	            	            // 計算馬達目標角度 (這裡直接將 Pitch 映射給 A 馬達，需視您的機構微調比例)
+	            	            float motor_cmd_A = -(current_pitch * 3.14159f / 180.0f) + motorA_offset;
+
+	            	            // 對 CAN1 發送 (控制 A 馬達)
+	            	            AK10_9_SendCommand(&hcan1, 0x01, motor_cmd_A, 0.0f, current_Kp, 0.1f, tau_ff_A);
+
+	            HAL_Delay(1);
+
+	            // 🌟 列印資訊更新：改印狀態機與 Pitch 角度
+	            	            static int print_counter = 0;
+	            	            print_counter++;
+	            	            if (print_counter >= 50) {
+	            	                if (is_brain_ready) {
+	            	                    float actual_A_deg = motorA_actual_pos * 180.0f / 3.14159f;
+	                                    // 印出：狀態(0~3)、大腦算出的Pitch、馬達收到的目標、馬達實際角度、當前剛性
+	            	                    printf("✅ 狀態: %d | Pitch: %.1f | Cmd: %.1f | Actual: %.1f | Kp: %.2f\r\n",
+	                                            current_state, current_pitch, motor_cmd_A, actual_A_deg, current_Kp);
+	            	                } else {
+	            	                    printf("⏳ 等待大腦... Kp: %.2f\r\n", current_Kp);
+	            	                }
+	            	                print_counter = 0;
+	            	            }
+	          }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 180;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLR = 2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief CAN1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN1_Init(void)
+{
+
+  /* USER CODE BEGIN CAN1_Init 0 */
+
+  /* USER CODE END CAN1_Init 0 */
+
+  /* USER CODE BEGIN CAN1_Init 1 */
+
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 3;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_12TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = DISABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN1_Init 2 */
+
+  /* USER CODE END CAN1_Init 2 */
+
+}
+
+/**
+  * @brief CAN2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN2_Init(void)
+{
+
+  /* USER CODE BEGIN CAN2_Init 0 */
+
+  /* USER CODE END CAN2_Init 0 */
+
+  /* USER CODE BEGIN CAN2_Init 1 */
+
+  /* USER CODE END CAN2_Init 1 */
+  hcan2.Instance = CAN2;
+  hcan2.Init.Prescaler = 3;
+  hcan2.Init.Mode = CAN_MODE_NORMAL;
+  hcan2.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan2.Init.TimeSeg1 = CAN_BS1_12TQ;
+  hcan2.Init.TimeSeg2 = CAN_BS2_2TQ;
+  hcan2.Init.TimeTriggeredMode = DISABLE;
+  hcan2.Init.AutoBusOff = DISABLE;
+  hcan2.Init.AutoWakeUp = DISABLE;
+  hcan2.Init.AutoRetransmission = DISABLE;
+  hcan2.Init.ReceiveFifoLocked = DISABLE;
+  hcan2.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN2_Init 2 */
+
+  /* USER CODE END CAN2_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 921600;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    CAN_RxHeaderTypeDef RxHeader;
+    uint8_t RxData[8];
+
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+    {
+        // 提取馬達位置 (Byte 1, Byte 2)
+        int16_t pos_int = (RxData[1] << 8) | RxData[2];
+        float position = ((float)pos_int * 25.0f / 65535.0f) - 12.5f;
+
+        // 🌟 自動分流：判斷是 CAN1 還是 CAN2 收到的
+        if (hcan->Instance == CAN1) {
+            // 來自 A 馬達
+            if (is_motorA_offset_set == 0) {
+                motorA_offset = position;
+                is_motorA_offset_set = 1;
+            }
+            motorA_actual_pos = position - motorA_offset;
+
+        } else if (hcan->Instance == CAN2) {
+            // 來自 B 馬達
+            if (is_motorB_offset_set == 0) {
+                motorB_offset = position;
+                is_motorB_offset_set = 1;
+            }
+            motorB_actual_pos = position - motorB_offset;
+        }
+    }
+}
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

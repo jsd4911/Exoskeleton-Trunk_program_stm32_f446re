@@ -8,7 +8,7 @@ import os
 # ==========================================
 # 讀取 BNO085 CSV 資料
 # ==========================================
-CSV_FILE = "simulation/V7_BNO085_Stoop_20260515_202624.csv"  # 換成您的 CSV 檔名
+CSV_FILE = "simulation/V7_BNO085_Kalman_20260528_181909.csv"  # 換成您的 CSV 檔名
 
 if not os.path.exists(CSV_FILE):
     print(f"❌ 找不到檔案 {CSV_FILE}")
@@ -18,9 +18,9 @@ df = pd.read_csv(CSV_FILE)
 
 # 取出必要欄位
 t_data = df['Time(s)'].values
-roll_data = df['Roll(deg)'].values
-pitch_data = df['Pitch(deg)'].values
-yaw_data = df['Yaw(deg)'].values
+roll_data = df['Filtered_Roll'].values
+pitch_data = df['Filtered_Pitch'].values
+yaw_data = df['Filtered_Yaw'].values
 
 # 計算重播速度
 FPS = 20  # BNO085 的採樣率是 20Hz
@@ -48,7 +48,10 @@ ax_3d.legend(loc='upper left')
 # 右側 2D 歷史波形圖
 ax_2d = fig.add_subplot(1, 2, 2)
 ax_2d.set_xlim([0, max_time])
-ax_2d.set_ylim([-180, 180]) # 歐拉角範圍
+# 🌟 讓 Y 軸根據您這次錄製的最高與最低角度自動調整，並上下多留 20 度的顯示空間
+min_angle = min(min(roll_data), min(pitch_data), min(yaw_data)) - 20
+max_angle = max(max(roll_data), max(pitch_data), max(yaw_data)) + 20
+ax_2d.set_ylim([min_angle, max_angle])
 ax_2d.set_xlabel('Time (s)'); ax_2d.set_ylabel('Angle (deg)')
 ax_2d.set_title('感測器原始數據')
 ax_2d.grid(True)

@@ -73,11 +73,67 @@ static void MX_USART3_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// 🌟 1D 動態卡爾曼濾波器結構體
+typedef struct {
+    float q; // 過程雜訊 (越小越相信物理慣性)
+    float r; // 測量雜訊 (對感測器的不信任度)
+    float x; // 狀態估計值 (當前平滑角度)
+    float p; // 估計誤差共變異數
+    float k; // 卡爾曼增益
+    int initialized; // 初始化標記
+} KalmanFilter1D;
+
+// 初始化三個軸的濾波器實體 (設定值與您 Python 版完全一致)
+KalmanFilter1D kf_roll  = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
+KalmanFilter1D kf_pitch = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
+KalmanFilter1D kf_yaw   = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
+
+// 🌟 卡爾曼濾波器更新函式
+// 參數: 濾波器指標, 測量值, 動態R值(抗震時會變大)
+float Kalman_Update(KalmanFilter1D* kf, float measurement, float dynamic_r) {
+    if (!kf->initialized) {
+        kf->x = measurement;
+        kf->initialized = 1;
+        return kf->x;
+    }
+
+    // 1. 預測 (Predict)
+    kf->p = kf->p + kf->q;
+
+    // 2. 更新 (Update)
+    kf->k = kf->p / (kf->p + dynamic_r);
+    kf->x = kf->x + kf->k * (measurement - kf->x);
+    kf->p = (1.0f - kf->k) * kf->p;
+
+    return kf->x;
+}
+
+// 🌟 解除相角折疊函式 (解決 +-180 度突波)
+float unwrap(float curr, float prev) {
+    float diff = fmodf((curr - prev + 180.0f), 360.0f);
+    if (diff < 0) diff += 360.0f;
+    return prev + (diff - 180.0f);
+}
+
+// 記錄解折疊後的連續角度與初始標記
+float unwrapped_r = 0.0f, unwrapped_p = 0.0f, unwrapped_y = 0.0f;
+int is_unwrapped_init = 0;
+
+// 晃動觸發閾值 (與 Python 一致)
+#define SHAKE_THRESHOLD 5.0f
+
+// 🌟 宣告用來轉換 float 與 byte 陣列的共用體 (Union)
+union {
+    uint8_t bytes[4];
+    float fval;
+} data_converter;
+
 int _write(int file, char *ptr, int len) {
     // 透過 USART2 把字元一個一個推給電腦
     HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, 100);
     return len;
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -175,7 +231,11 @@ int main(void)
 	                            float sqI = qI * qI, sqJ = qJ * qJ, sqK = qK * qK;
 
 	                            float roll_rad  = atan2(2.0f * (qR * qI + qJ * qK), 1.0f - 2.0f * (sqI + sqJ));
-	                            float pitch_rad = asin(2.0f * (qR * qJ - qK * qI));
+	                            // 🛡️ 核心修復：根除 NaN 毒藥的源頭！
+	                            float sinp = 2.0f * (qR * qJ - qK * qI);
+	                            if (sinp > 1.0f) sinp = 1.0f;   // 強制限制上限
+	                            if (sinp < -1.0f) sinp = -1.0f; // 強制限制下限
+	                            float pitch_rad = asin(sinp);
 	                            float yaw_rad   = atan2(2.0f * (qR * qK + qI * qJ), 1.0f - 2.0f * (sqJ + sqK));
 
 	                            // 弧度轉角度
@@ -183,20 +243,115 @@ int main(void)
 	                            pitch = pitch_rad * 180.0f / 3.14159265f;
 	                            yaw   = yaw_rad   * 180.0f / 3.14159265f;
 
-	                            // 🌟 見證奇蹟的時刻：印出角度！
-	                            //printf("Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+	                            // 🌟 核心：C 語言版解折疊與動態卡爾曼濾波 🌟
 
-	                            // 🌟 見證奇蹟的時刻：印出角度！
-	                            printf("%.1f,%.1f,%.1f\r\n", roll, pitch, yaw);
-	                            //printf("%.2f,%.2f,%.2f\r\n", roll, pitch, yaw);
-	                            // 2. 👉 新增：打包成字串發送給「馬達板」 (透過 USART3)
-	                            //char sync_buf[30];
-	                            // 將角度塞進字串，記得最後一定要有 \n (換行符號)，馬達板才知道這句話講完了
-	                            //sprintf(sync_buf, "P:%.1f,R:%.1f,Y:%.1f\n", pitch, roll, yaw);
+	                            // 🛡️ 終極裝甲：如果真的還是出現 NaN，直接丟棄這包資料，絕對不准進入濾波器！
+	                            if (isnan(pitch) || isnan(roll) || isnan(yaw)) {
+	                            	continue;
+	                            }
+	                            float final_roll, final_pitch, final_yaw;
 
-	                            // 透過 USART3 傳送出去，設定 10ms 的超時保護
-	                            //HAL_UART_Transmit(&huart3, (uint8_t*)sync_buf, strlen(sync_buf), 10);
-	                            // 👆 ==============================================================
+
+	                            if (!is_unwrapped_init) {
+	                            // 第一次讀取，初始化解折疊記憶與卡爾曼濾波器
+	                            unwrapped_r = roll;
+	                            unwrapped_p = pitch;
+	                            unwrapped_y = yaw;
+
+	                            final_roll  = Kalman_Update(&kf_roll, roll, kf_roll.r);
+	                            final_pitch = Kalman_Update(&kf_pitch, pitch, kf_pitch.r);
+	                            final_yaw   = Kalman_Update(&kf_yaw, yaw, kf_yaw.r);
+
+	                            is_unwrapped_init = 1;
+	                            } else {
+	                            // 1. 解除相角突波
+	                            float r = unwrap(roll, unwrapped_r);
+	                            float p = unwrap(pitch, unwrapped_p);
+	                            float y = unwrap(yaw, unwrapped_y);
+
+	                            // 2. 計算單幀真實角速度 (無延遲)
+	                            float delta_raw_r = fabsf(r - unwrapped_r);
+	                            float delta_raw_p = fabsf(p - unwrapped_p);
+	                            float delta_raw_y = fabsf(y - unwrapped_y);
+
+	                            // 更新記憶體
+	                            unwrapped_r = r;
+	                            unwrapped_p = p;
+	                            unwrapped_y = y;
+
+	                            // 3. 判斷是否受到劇烈震盪，動態調整 R 值 (抗震防禦)
+	                            float dyn_r_roll  = (delta_raw_r > SHAKE_THRESHOLD) ? 50.0f : kf_roll.r;
+	                            float dyn_r_pitch = (delta_raw_p > SHAKE_THRESHOLD) ? 50.0f : kf_pitch.r;
+	                            float dyn_r_yaw   = (delta_raw_y > SHAKE_THRESHOLD) ? 50.0f : kf_yaw.r;
+
+	                            // 4. 執行卡爾曼濾波更新
+	                            final_roll  = Kalman_Update(&kf_roll, r, dyn_r_roll);
+	                            final_pitch = Kalman_Update(&kf_pitch, p, dyn_r_pitch);
+	                            final_yaw   = Kalman_Update(&kf_yaw, y, dyn_r_yaw);
+	                            }
+
+	                            // 🌟 見證奇蹟的時刻：印出濾波後的平滑角度！
+	                            // (開啟此行可用 Serial Plotter 觀看極度平滑的曲線)
+	                            // printf("%.2f,%.2f,%.2f\r\n", final_roll, final_pitch, final_yaw);
+
+	                            // 為了檢查濾波效果，我們先印出 "原始Pitch" 與 "濾波Pitch" 的對比
+	                            printf("Raw_P: %6.1f | Filtered_P: %6.1f | K: %.3f\r\n", pitch, final_pitch, kf_pitch.k);
+	                            // 💡 確保在 while(1) 外面的 /* USER CODE BEGIN 0 */ 有宣告這個共用體：
+
+
+	                            // ... 在 while(1) 裡面，算出 final_pitch 之後 ...
+	                            // 🌟 新增：IMU 軟體歸零 (紀錄站直時的初始穿戴角度)
+	                            // 🌟 修正 2：IMU 暖機倒數計時器 (丟棄剛開機的不穩定雜訊)
+	                            static float pitch_offset = 0.0f;
+	                            static int is_pitch_offset_set = 0;
+	                            static int warmup_counter = 0; // 暖機計數器
+	                            float relative_pitch = 0.0f;
+
+	                            if (is_pitch_offset_set == 0) {
+	                                warmup_counter++;
+	                                if (warmup_counter > 100) { // 等待大約 1~2 秒讓感測器完全冷靜
+	                                    pitch_offset = final_pitch;
+	                                    is_pitch_offset_set = 1;
+	                                    printf("✅ IMU Ready & Zero Point Locked!\r\n");
+	                                }
+	                                relative_pitch = 0.0f; // 暖機期間，強制輸出 0 度，馬達絕對不動
+	                            } else {
+	                                relative_pitch = final_pitch - pitch_offset;
+	                            }
+
+	                            // 🌟 核心架構升級：刪除所有 X/Y 座標轉換與死區！
+	                            	                            // 大腦板的工作簡化為「純淨感測」，把最真實的角度直接傳給小腦板的狀態機。
+	                            	                            float pitch_to_send = relative_pitch;  // 取出歸零後的真實彎腰角度
+	                            	                            float roll_to_send  = final_roll;      // 取出 Roll 角度 (備用)
+
+	                            	                            // 2. 打包成 13 個 Bytes 的軍規級封包 (Header + 狀態 + Pitch + Roll + Tail)
+	                            	                            uint8_t tx_buffer[13];
+
+	                            	                            // 標頭與狀態碼
+	                            	                            tx_buffer[0] = 0xAA;
+	                            	                            tx_buffer[1] = 0x55;
+	                            	                            tx_buffer[2] = (uint8_t)is_pitch_offset_set; // 1 代表感測器已歸零準備就緒
+
+	                            	                            // 🌟 打包 Pitch 角度 (放入原本 X 的 3~6 號位置)
+	                            	                            data_converter.fval = pitch_to_send;
+	                            	                            tx_buffer[3] = data_converter.bytes[0];
+	                            	                            tx_buffer[4] = data_converter.bytes[1];
+	                            	                            tx_buffer[5] = data_converter.bytes[2];
+	                            	                            tx_buffer[6] = data_converter.bytes[3];
+
+	                            	                            // 🌟 打包 Roll 角度 (放入原本 Y 的 7~10 號位置)
+	                            	                            data_converter.fval = roll_to_send;
+	                            	                            tx_buffer[7] = data_converter.bytes[0];
+	                            	                            tx_buffer[8] = data_converter.bytes[1];
+	                            	                            tx_buffer[9] = data_converter.bytes[2];
+	                            	                            tx_buffer[10] = data_converter.bytes[3];
+
+	                            // 🌟 加上封包結尾
+	                            tx_buffer[11] = 0x0D; // \r
+	                            tx_buffer[12] = 0x0A; // \n
+
+	                            // 3. 透過 USART3 傳送 13 個 Byte
+	                            HAL_UART_Transmit(&huart3, tx_buffer, 13, 10);
 	                        }
 	                    }
 	                }

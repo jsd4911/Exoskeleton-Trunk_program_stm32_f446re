@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;AK10-9Coupling/Core/Inc/AK10_9_Driver&apos; to &apos;AK10_9_Driver.h&apos;" description="Rename resource &apos;AK10_9_Driver&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Inc/AK10_9_Driver" name="AK10_9_Driver.h" stamp="1780635211357" updateReferences="true"/>
+</session>

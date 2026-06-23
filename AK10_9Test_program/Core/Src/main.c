@@ -149,6 +149,7 @@ int main(void)
   {
       // --- 1. 偵測藍色按鈕 (B1 / PC13) ---
 	  // --- 1. 偵測藍色按鈕 (B1 / PC13) ---
+	      printf("%.1f\r\n", motor_pos);
 	      if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
 	      {
 	          // 【狀態 A：按鈕被按住】

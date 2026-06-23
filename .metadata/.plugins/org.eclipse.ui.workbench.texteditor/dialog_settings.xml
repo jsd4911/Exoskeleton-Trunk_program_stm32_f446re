@@ -3,6 +3,14 @@
 	<item key="hasShownOverlayPopupBefore" value="true"/>
 	<item key="replaceBarOpen" value="false"/>
 	<list key="searchhistory">
+		<item value="if (!is_unwrapped_init)"/>
+		<item value="STATE_IDLE"/>
+		<item value="target_A_deg"/>
+		<item value="current_Kp"/>
+		<item value="tau_ff_A"/>
+		<item value="timeout_counter++"/>
+		<item value="is_brain_ready"/>
+		<item value="motorA_offset"/>
 		<item value="MX_GPIO_Init"/>
 		<item value="BNO08x_ADDR"/>
 		<item value="ai_input[AI_NETWORK_IN_NUM] = AI_NETWORK_IN_CONFIG;"/>

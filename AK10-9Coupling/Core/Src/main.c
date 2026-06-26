@@ -200,6 +200,10 @@ int main(void)
 	    static int timeout_counter = 0;
 	    static float current_pitch = 0.0f; // 🌟 補上出生證明：用來記憶當下的彎腰角度
 
+	    // 🌟 核心動力來源：必須加上 static 讓它們有記憶，否則馬達會軟腿！
+	    static float current_Kp = 0.0f;
+	    static float tau_ff_A = 0.0f;
+
 	    // 🌟 新增：彎腰狀態機定義
 	    typedef enum {
 	        STATE_IDLE = 0,         // 站立閒置
@@ -258,6 +262,8 @@ int main(void)
 	                data_converter.bytes[3] = rx_buffer[(header_idx + 10) % 13];
 	                float temp_Y = data_converter.fval;
 
+	                (void)temp_Y;  // 🌟 加上這一行：告訴編譯器我們刻意不使用它，消除 Warning
+
 	                // 只有大腦說「我準備好了」，才允許更新座標
 	                // 🛡️ 核心修復：不僅要大腦說準備好了，還要確保送來的絕對不是 NaN！
 	                	                if (status == 1 && !isnan(temp_X)) {
@@ -275,78 +281,130 @@ int main(void)
 	                }
 	            }
 
-	            // 🌟 補上宣告，預設出力為 0
-	            float tau_ff_A = 0.0f;
-	            // 🛡️ 終極防護罩機制與狀態機
+
+	            // ================= 🧠 智能控制核心 =================
 	            	            if (!is_brain_ready) {
 	            	                current_Kp = 0.0f;
 	            	                tau_ff_A = 0.0f;
 	            	                current_state = STATE_IDLE;
 	            	            } else {
-	            	                // 🌟 計算角速度 (加入極小值防雜訊)
+	            	                // 1. 計算角速度
 	            	                float delta_pitch = current_pitch - last_pitch;
 	            	                last_pitch = current_pitch;
 
-	            	                // 定義「目標值」，不直接修改當前輸出的力量
-	            	                float target_Kp = 0.5f;
+	            	                float target_Kp = 0.0f;
 	            	                float target_tau = 0.0f;
 
-	            	                // --- 狀態判斷 ---
-	            	                if (current_pitch < 15.0f) {
+	            	                // 2. 狀態判斷 (加入 18度 防抖死區)
+	            	                if (current_pitch < 15.0f && current_pitch > -15.0f) {
 	            	                    current_state = STATE_IDLE;
 	            	                } else if (current_pitch > 60.0f && fabs(delta_pitch) < 0.2f) {
 	            	                    current_state = STATE_HOLDING;
-	            	                } else if (delta_pitch > 0.2f) {
+	            	                } else if (delta_pitch > 0.1f) {
 	            	                    current_state = STATE_BENDING_DOWN;
-	            	                } else if (delta_pitch < -0.2f) {
+	            	                } else if (delta_pitch < -0.1f) {
 	            	                    current_state = STATE_RETURNING_UP;
 	            	                }
 
-	            	                // --- 狀態執行：設定【目標】剛性與扭力 ---
+	            	                // 3. 狀態執行：指派【目標】剛性與扭力
 	            	                switch (current_state) {
 	            	                    case STATE_IDLE:
-	            	                        target_Kp = 1.5f;
+	            	                        target_Kp = 15.0f; // 強化站直時的支撐力
 	            	                        target_tau = 0.0f;
 	            	                        break;
-
 	            	                    case STATE_BENDING_DOWN:
-	            	                        target_Kp = 1.0f;
+	            	                        target_Kp = 5.0f;
+	            	                        // 彎腰時提供 50% 的重力補償支撐
 	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) * 0.5f;
 	            	                        break;
-
 	            	                    case STATE_HOLDING:
-	            	                        target_Kp = 3.0f;
+	            	                        target_Kp = 25.0f;
+	            	                        // 懸停時提供 100% 滿載的重力補償
 	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f);
 	            	                        break;
-
 	            	                    case STATE_RETURNING_UP:
-	            	                        target_Kp = 1.5f;
+	            	                        target_Kp = 15.0f;
+	            	                        // 起身時提供重力補償 + 額外 2.0Nm 拉起輔助力
 	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) + 2.0f;
 	            	                        break;
 	            	                }
 
-	            	                // 🌟 核心修復：平滑過渡濾波器 (Exponential Moving Average)
-	            	                // 讓力量像踩油門一樣「平滑漸進」，徹底杜絕電流突波與當機！
-	            	                float smooth_factor = 0.05f; // 數值越小，力量變化越柔和
+	            	                // 4. 🛡️ 平滑過渡濾波器 (防止馬達因電流突波當機)
+	            	                float smooth_factor = 0.3f;
 	            	                current_Kp += (target_Kp - current_Kp) * smooth_factor;
 	            	                tau_ff_A += (target_tau - tau_ff_A) * smooth_factor;
 	            	            }
 
+	            	            // ================= 🦴 雙軸脊椎補償 IK =================
 	            	            float motor_cmd_A;
+	            	            float motor_cmd_B;
+
 	            	            if (current_state == STATE_IDLE) {
-	            	                // 站直時，無視感測器的微小雜訊，強制回到絕對 0 度！
-	            	            	motor_cmd_A = motorA_offset;
+	            	                // 站立時：消除累積誤差，強制雙馬達鎖定絕對零度
+	            	                motor_cmd_A = motorA_offset;
+	            	                motor_cmd_B = motorB_offset;
 	            	            } else {
-	            	            	// 彎腰時，才精準跟隨背部角度
-	            	            	motor_cmd_A = -(current_pitch * 3.14159f / 180.0f) + motorA_offset;
+	            	                // 彎腰時：啟動脊椎動態延長方程式
+	            	                // ⚠️ 請修改以下 L1, L2 參數以符合您的實體機構長度 (單位：公尺)
+	            	                float L1 = 0.20f; // A 馬達到 B 馬達的連桿長度
+	            	                float L2 = 0.075f; // B 馬達到肩膀綁帶的連桿長度
+
+	            	                // 站直時的「初始直線距離」(必須小於 L1+L2，讓連桿保持預先彎曲的彈性空間)
+	            	                float base_radius = 0.24f;
+
+	            	                // 脊椎拉長量：彎腰越深，半徑越長 (最大釋放 0.06m 長度)
+	            	                float elongation = (current_pitch / 90.0f) * 0.03f;
+	            	                if (elongation < 0.0f) elongation = 0.0f;
+	            	                float current_radius = base_radius + elongation;
+
+	            	                // 目標座標映射
+	            	                float current_pitch_rad = current_pitch * 3.14159f / 180.0f;
+	            	                float target_X = current_radius * cosf(current_pitch_rad);
+	            	                float target_Y = current_radius * sinf(current_pitch_rad);
+
+	            	                // 逆向運動學運算
+	            	                float cos_theta_B = (target_X*target_X + target_Y*target_Y - L1*L1 - L2*L2) / (2 * L1 * L2);
+	            	                if(cos_theta_B > 1.0f) cos_theta_B = 1.0f;   // 防止數學運算出現 NaN
+	            	                if(cos_theta_B < -1.0f) cos_theta_B = -1.0f;
+
+	            	                float theta_B = acosf(cos_theta_B);
+	            	                float theta_A = atan2f(target_Y, target_X) - atan2f(L2 * sinf(theta_B), L1 + L2 * cosf(theta_B));
+
+	            	                // 計算最終角度 (請依據您的實體轉向決定是否保留負號)
+	            	                motor_cmd_A = (-theta_A) + motorA_offset;
+	            	                motor_cmd_B = (theta_B) + motorB_offset;
 	            	            }
 
+	            	            // 🌟 終極修復：對目標角度進行「無段變速平滑 (EMA 濾波)」
+	            	            // 即使狀態切換，馬達也只會柔和地滑過去，徹底消除您看到的抽搐！
+	            	            static float smooth_cmd_A = 0.0f;
+	            	            static float smooth_cmd_B = 0.0f;
+	            	            static int is_cmd_init = 0;
 
+	            	            if (is_cmd_init == 0) {
+	            	            	smooth_cmd_A = motorA_offset;
+	            	            	smooth_cmd_B = motorB_offset;
+	            	            	is_cmd_init = 1;
+	            	            }
 
-	            	            // 對 CAN1 發送 (控制 A 馬達)
-	            	            AK10_9_SendCommand(&hcan1, 0x01, motor_cmd_A, 0.0f, current_Kp, 0.1f, tau_ff_A);
+	            	            // 🌟 修正 2：拆分神經反應速度 (解決 B 馬達太快、甩動的問題)
+	            	            float angle_smooth_factor_A = 0.40f; // A 馬達 (髖部主關節)：反應敏捷，負責主要支撐
+	            	            float angle_smooth_factor_B = 0.03f; // B 馬達 (背部末端)：極度緩慢柔和，像油壓缸一樣慢慢伸直
 
-	            HAL_Delay(1);
+	            	            //float angle_smooth_factor = 0.4f; // 數值越小越柔和 (可微調)
+	            	            smooth_cmd_A += (motor_cmd_A - smooth_cmd_A) * angle_smooth_factor_A;
+	            	            smooth_cmd_B += (motor_cmd_B - smooth_cmd_B) * angle_smooth_factor_B;
+
+	            	            // ================= 🚀 雙馬達指令發送 =================
+	            	            // 發送給 A 馬達 (主力髖關節)
+	            	            AK10_9_SendCommand(&hcan1, 0x01, motor_cmd_A, 0.0f, current_Kp, 1.5f, tau_ff_A);
+	            	            HAL_Delay(1); // 確保 CAN bus 有時間消化
+
+	            	            // 發送給 B 馬達 (背部補償微調)
+	            	            // B 馬達不需負擔重力，剛性減半，無 Feedforward 扭力
+	            	            float current_Kp_B = current_Kp * 0.4f;
+	            	            AK10_9_SendCommand(&hcan2, 0x01, motor_cmd_B, 0.0f, current_Kp_B, 1.0f, 0.0f);
+	            	            HAL_Delay(1);
 
 	            // 🌟 列印資訊更新：改印狀態機與 Pitch 角度
 	            	            static int print_counter = 0;

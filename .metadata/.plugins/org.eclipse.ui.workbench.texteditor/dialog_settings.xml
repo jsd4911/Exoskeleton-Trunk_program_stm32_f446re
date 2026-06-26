@@ -3,6 +3,7 @@
 	<item key="hasShownOverlayPopupBefore" value="true"/>
 	<item key="replaceBarOpen" value="false"/>
 	<list key="searchhistory">
+		<item value="data_converter"/>
 		<item value="if (!is_unwrapped_init)"/>
 		<item value="STATE_IDLE"/>
 		<item value="target_A_deg"/>

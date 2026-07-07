@@ -3,6 +3,8 @@
 	<item key="hasShownOverlayPopupBefore" value="true"/>
 	<item key="replaceBarOpen" value="false"/>
 	<list key="searchhistory">
+		<item value="uint8_t status = rx_buf[(read_ptr + 2) % RX_BUF_SIZE];"/>
+		<item value="MX_USART2_UART_Init"/>
 		<item value="data_converter"/>
 		<item value="if (!is_unwrapped_init)"/>
 		<item value="STATE_IDLE"/>
@@ -17,4 +19,23 @@
 		<item value="ai_input[AI_NETWORK_IN_NUM] = AI_NETWORK_IN_CONFIG;"/>
 		<item value="window_index"/>
 	</list>
+	<section name="org.eclipse.ui.texteditor.FindReplaceDialog">
+		<item key="wrap" value="true"/>
+		<item key="casesensitive" value="false"/>
+		<item key="wholeword" value="false"/>
+		<item key="incremental" value="false"/>
+		<item key="isRegEx" value="false"/>
+		<list key="findhistory">
+			<item value="14:45:17 **** Incremental Build of configuration Debug for project AK10-9Coupling ****"/>
+		</list>
+		<list key="replacehistory">
+		</list>
+	</section>
+	<section name="org.eclipse.ui.texteditor.FindReplaceDialog_dialogBounds">
+		<item key="DIALOG_X_ORIGIN" value="807"/>
+		<item key="DIALOG_Y_ORIGIN" value="264"/>
+		<item key="DIALOG_WIDTH" value="322"/>
+		<item key="DIALOG_HEIGHT" value="391"/>
+		<item key="DIALOG_FONT_NAME" value="1|Microsoft JhengHei UI|9.0|0|WINDOWS|1|-12|0|0|0|400|0|0|0|1|0|0|0|0|Microsoft JhengHei UI"/>
+	</section>
 </section>

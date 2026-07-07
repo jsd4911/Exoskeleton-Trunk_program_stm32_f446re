@@ -1,0 +1,478 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body for STM32N657X0 BNO085
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <string.h>
+#include <math.h>          // 計算反三角函數用
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+// 使用您在實體電路上驗證成功的 BNO085 活躍地址 (0x4B)，左移 1 位後為 0x96
+#define BNO08x_ADDR (0x4B << 1)
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+I2C_HandleTypeDef hi2c3;
+
+UART_HandleTypeDef huart1;
+
+/* USER CODE BEGIN PV */
+float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
+uint8_t isStreaming = 0;
+uint32_t lastCmdTick = 0;
+volatile uint8_t bno_data_ready = 0; // 外部中斷標記旗標
+
+// BNO085 啟動指令 (要求 20Hz 回報 Rotation Vector)
+uint8_t setFeatureCmd[21] = {
+    21, 0, 2, 0,
+    0xFD, 0x05, 0, 0, 0,
+    0x50, 0xC3, 0x00, 0x00, // 50,000 微秒 = 50ms = 20Hz
+    0, 0, 0, 0, 0, 0, 0, 0
+};
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+static void MX_GPIO_Init(void);
+static void MX_I2C3_Init(void);
+static void MX_USART1_UART_Init(void);
+static void SystemIsolation_Config(void);
+/* USER CODE BEGIN PFP */
+void I2C3_Scan(void);
+void BNO085_Reset(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+// 重新導向 printf 到 USART1 (VCP 序列埠)
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
+
+PUTCHAR_PROTOTYPE {
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+    return ch;
+}
+
+// 帶有「暫存器緩衝恢復防護」的 I2C 總線地址掃描器
+void I2C3_Scan(void) {
+    printf("[I2C3] 開始掃描總線裝置...\r\n");
+    uint8_t devices_found = 0;
+
+    for (uint16_t i = 1; i < 128; i++) {
+        // 使用 IsDeviceReady 進行探測，確認裝置是否有發出 ACK 響應
+        if (HAL_I2C_IsDeviceReady(&hi2c3, (i << 1), 3, 10) == HAL_OK) {
+            printf("  -> 發現裝置！ 7位元位址: 0x%02X (寫入位址: 0x%02X)", i, (i << 1));
+            if (i == 0x4B) {
+                printf(" [BNO085 活躍地址 (AD0/DI拉高)]");
+            } else if (i == 0x4A) {
+                printf(" [BNO085 預設地址 (GND)]");
+            }
+            printf("\r\n");
+            devices_found++;
+        }
+
+        // 🌟 核心修正：在每個地址的探測之間強迫加上 5 毫秒延遲！
+        // STM32N6 運作頻率高達 800MHz。如果不加延遲，連續、極速的探測會導致 I2C 硬體外設的
+        // 狀態暫存器旗標來不及復位，產生滿螢幕都是虛擬裝置的 Ghost ACK。加上這 5ms 能保證旗標乾淨。
+        HAL_Delay(5);
+    }
+
+    if (devices_found == 0) {
+        printf("[I2C3] 警告: 未在總線上發現任何裝置。請檢查實體接線與上拉電阻！\r\n");
+    } else {
+        printf("[I2C3] 掃描完畢，共發現 %d 個活躍裝置。\r\n", devices_found);
+    }
+    printf("==============================================\r\n");
+}
+
+// 硬體重置 BNO085 函數 (使用正面 D8 -> PD12，低電平有效)
+void BNO085_Reset(void) {
+    printf("[BNO085] 正在執行硬體重置...\r\n");
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET); // 拉低 RST 腳
+    HAL_Delay(50);                                         // 持續 50ms
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);   // 拉高 RST 解除重置
+    HAL_Delay(500);                                        // 等待 BNO085 內部開機引導穩定
+    printf("[BNO085] 硬體重置完成。\r\n");
+}
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_I2C3_Init();
+  MX_USART1_UART_Init();
+  SystemIsolation_Config();
+  /* USER CODE BEGIN 2 */
+  HAL_Delay(1000);
+  printf("\r\n=== STM32N657X0 BNO085 姿態解算啟動 ===\r\n");
+
+  // 0. I2C3 總線防鬼影精密掃描
+  I2C3_Scan();
+
+  // 1. 硬體重置 BNO085
+  BNO085_Reset();
+
+  // 再次防禦性偵測單一地址
+  if (HAL_I2C_IsDeviceReady(&hi2c3, BNO08x_ADDR, 5, 100) == HAL_OK) {
+      printf("-> BNO085 (0x4B) 連線成功！準備接收資料...\r\n");
+  } else {
+      printf("-> BNO085 連線失敗，啟動自動喚醒嘗試...\r\n");
+  }
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+    // --- 任務 A：自動喚醒/敲門機制 ---
+    // 如果還沒有收到成功的數據包，每 2 秒主動向 BNO085 發送一次啟動 Rotation Vector 的指令
+    if (isStreaming == 0 && (HAL_GetTick() - lastCmdTick > 2000)) {
+        printf("-> 發送啟動指令給 BNO085...\r\n");
+        HAL_I2C_Master_Transmit(&hi2c3, BNO08x_ADDR, setFeatureCmd, 21, 100);
+        lastCmdTick = HAL_GetTick();
+    }
+
+    // --- 任務 B：中斷與低電位雙重防線讀取解算 ---
+    // 只要 D7 中斷旗標觸發，或者實體 PE11 腳處於低電平（代表感測器有新資料要吐出來），就執行讀取
+    if (bno_data_ready || HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_11) == GPIO_PIN_RESET)
+    {
+        bno_data_ready = 0; // 清除軟體中斷標記
+        uint8_t header[4];
+
+        // 1. 讀取 4 位元組的 SHTP 標頭
+        if (HAL_I2C_Master_Receive(&hi2c3, BNO08x_ADDR, header, 4, 100) == HAL_OK)
+        {
+            // 解析出整筆資料封包的長度
+            uint16_t length = ((header[1] << 8) | header[0]) & 0x7FFF;
+            uint8_t channel = header[2];
+
+            if (length > 0 && length <= 512)
+            {
+                uint8_t shtpData[512];
+                // 2. 完整讀取整個 length 長度的數據
+                if (HAL_I2C_Master_Receive(&hi2c3, BNO08x_ADDR, shtpData, length, 100) == HAL_OK)
+                {
+                    // 判斷是否為 Rotation Vector (通道 3 且 Feature ID 為 0x05)
+                    if (channel == 3 && shtpData[9] == 0x05)
+                    {
+                        isStreaming = 1; // 成功讀取，解除自動發送狀態
+
+                        // 提取四元數原始 16 位元資料 (小端格式拼接)
+                        int16_t i_raw = (shtpData[14] << 8) | shtpData[13];
+                        int16_t j_raw = (shtpData[16] << 8) | shtpData[15];
+                        int16_t k_raw = (shtpData[18] << 8) | shtpData[17];
+                        int16_t r_raw = (shtpData[20] << 8) | shtpData[19];
+
+                        // 四元數數值縮放 (14 bit Q-point = 2^14 = 16384)
+                        float qI = (float)i_raw / 16384.0f;
+                        float qJ = (float)j_raw / 16384.0f;
+                        float qK = (float)k_raw / 16384.0f;
+                        float qR = (float)r_raw / 16384.0f;
+
+                        // 計算中間輔助變數
+                        float sqI = qI * qI;
+                        float sqJ = qJ * qJ;
+                        float sqK = qK * qK;
+
+                        // 高精度四元數轉歐拉角 (Roll, Pitch, Yaw)
+                        roll  = atan2f(2.0f * (qR * qI + qJ * qK), 1.0f - 2.0f * (sqI + sqJ)) * (180.0f / (float)M_PI);
+                        pitch = asinf(2.0f * (qR * qJ - qK * qI)) * (180.0f / (float)M_PI);
+                        yaw   = atan2f(2.0f * (qR * qK + qI * qJ), 1.0f - 2.0f * (sqJ + sqK)) * (180.0f / (float)M_PI);
+
+                        // VCP 終端機格式化角度輸出
+                        printf("姿態角度 -> Roll: %6.1f | Pitch: %6.1f | Yaw: %6.1f\r\n", roll, pitch, yaw);
+                    }
+                }
+            }
+        }
+    }
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief I2C3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C3_Init(void)
+{
+
+  /* USER CODE BEGIN I2C3_Init 0 */
+
+  /* USER CODE END I2C3_Init 0 */
+
+  /* USER CODE BEGIN I2C3_Init 1 */
+
+  /* USER CODE END I2C3_Init 1 */
+  hi2c3.Instance = I2C3;
+  hi2c3.Init.Timing = 0x10C0ECFF;
+  hi2c3.Init.OwnAddress1 = 0;
+  hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c3.Init.OwnAddress2 = 0;
+  hi2c3.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c3.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c3, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c3, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C3_Init 2 */
+
+  /* USER CODE END I2C3_Init 2 */
+
+}
+
+/**
+  * @brief RIF Initialization Function
+  * @param None
+  * @retval None
+  */
+static void SystemIsolation_Config(void)
+{
+
+  /* USER CODE BEGIN RIF_Init 0 */
+
+  /* USER CODE END RIF_Init 0 */
+
+  /* set all required IPs as secure privileged */
+  __HAL_RCC_RIFSC_CLK_ENABLE();
+  RIMC_MasterConfig_t RIMC_master = {0};
+  RIMC_master.MasterCID = RIF_CID_1;
+  RIMC_master.SecPriv = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV;
+
+  /*RIMC configuration*/
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_ETH1, &RIMC_master);
+
+  /* RIF-Aware IPs Config */
+
+  /* set up GPIO configuration */
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_8,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_7,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOC,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_12,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOH,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+
+  /* USER CODE BEGIN RIF_Init 1 */
+
+  /* USER CODE END RIF_Init 1 */
+  /* USER CODE BEGIN RIF_Init 2 */
+
+  /* USER CODE END RIF_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : PD12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PE11 */
+  GPIO_InitStruct.Pin = GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI11_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI11_IRQn);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+// 當 D7 (PE11) 的外部中斷下降沿觸發時，STM32N6 會自動跳入此回呼函數
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == GPIO_PIN_11) {
+        bno_data_ready = 1; // 標記 BNO085 數據已備妥，主迴圈可讀取
+    }
+}
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  * where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

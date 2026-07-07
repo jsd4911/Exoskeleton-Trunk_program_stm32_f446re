@@ -183,244 +183,247 @@ int main(void)
     // 給馬達一點時間進入控制模式
     HAL_Delay(100);
 
-    // 🚀 關鍵升級：啟動 UART DMA 背景接收
-    HAL_UART_Receive_DMA(&huart3, rx_buffer, 13);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+
+          // ================= 📝 靜態變數宣告區 =================
+          static int is_brain_ready = 0;
+          static float current_pitch = 0.0f;
+          static float current_Kp = 0.0f;
+          static float tau_ff_A = 0.0f;
+
+          #define STATE_IDLE 0
+          #define STATE_BENDING_DOWN 1
+          #define STATE_RETURNING_UP 2
+          #define STATE_HOLDING 3
+          static int current_state = STATE_IDLE;
+
+          static float theta_B_zero = 0.0f;
+          static int is_ik_init = 0;
+          static float smooth_cmd_A = 0.0f;
+          static float smooth_cmd_B = 0.0f;
+          static int is_cmd_init = 0;
+
+          // 🌟 終極升級：1000 Bytes 圓形循環 DMA 緩衝區 (Immortal DMA)
+          #define RX_BUF_SIZE 1000
+          static uint8_t rx_buf[RX_BUF_SIZE];
+          static uint16_t read_ptr = 0;
+
+          static uint32_t last_rx_tick = 0;
+          static uint32_t last_can_tx_tick = 0;
+          static int system_init = 0;
+          static uint16_t heartbeat = 0;
+
+          while (1)
+          {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  // 🌟 把它們的「出生證明」補回來，放在迴圈最上面最安全！
-	    static int is_brain_ready = 0;
-	    static int timeout_counter = 0;
-	    static float current_pitch = 0.0f; // 🌟 補上出生證明：用來記憶當下的彎腰角度
 
-	    // 🌟 核心動力來源：必須加上 static 讓它們有記憶，否則馬達會軟腿！
-	    static float current_Kp = 0.0f;
-	    static float tau_ff_A = 0.0f;
+            // 第一次執行時，啟動不死 DMA
+            if (system_init == 0) {
+                last_rx_tick = HAL_GetTick();
 
-	    // 🌟 新增：彎腰狀態機定義
-	    typedef enum {
-	        STATE_IDLE = 0,         // 站立閒置
-	        STATE_BENDING_DOWN = 1, // 彎腰下去
-	        STATE_RETURNING_UP = 2, // 起身拉起
-	        STATE_HOLDING = 3       // 彎腰懸停
-	    } StoopState;
+                // 強制停止之前的任何接收
+                HAL_UART_AbortReceive(&huart3);
 
-	    static StoopState current_state = STATE_IDLE;
-	    static float last_pitch = 0.0f; // 用來計算 Delta_Pitch
-	  	  // 🌟 加上這三行「心肺復甦術」：只要 UART 閒置罷工，就立刻強制它重新接收 13 Bytes！
-	        	if (huart3.RxState == HAL_UART_STATE_READY) {
-	        		HAL_UART_Receive_DMA(&huart3, rx_buffer, 13);
-	        	}
+                // 🔥 強制改為 DMA 圓形循環模式 (Circular)，永不停止！
+                if (huart3.hdmarx != NULL) {
+                    huart3.hdmarx->Init.Mode = DMA_CIRCULAR;
+                    HAL_DMA_Init(huart3.hdmarx);
+                }
+                // 啟動接收 (這輩子只呼叫這一次！)
+                HAL_UART_Receive_DMA(&huart3, rx_buf, RX_BUF_SIZE);
 
+                // 🔪 拔掉 HAL 的管轄權：關閉錯誤中斷，發生 ORE 也不會被強迫 Abort！
+                CLEAR_BIT(huart3.Instance->CR3, USART_CR3_EIE);
 
-	            if (huart3.ErrorCode != HAL_UART_ERROR_NONE) {
-	                HAL_UART_AbortReceive(&huart3);
-	                __HAL_UART_CLEAR_OREFLAG(&huart3);
-	                __HAL_UART_CLEAR_NEFLAG(&huart3);
-	                __HAL_UART_CLEAR_FEFLAG(&huart3);
-	                huart3.ErrorCode = HAL_UART_ERROR_NONE;
-	                HAL_UART_Receive_DMA(&huart3, rx_buffer, 13); // 這裡也要改成 13
-	            }
+                system_init = 1;
+            }
 
-	            int header_idx = -1;
-	            // 🌟 環形掃描器：尋找 13 Bytes 封包的開頭與結尾
-	            // 無論 DMA 從哪裡開始切斷，我們都一定能找出完美的封包
-	            for(int i=0; i<13; i++) {
-	                if(rx_buffer[i] == 0xAA &&
-	                   rx_buffer[(i+1)%13] == 0x55 &&
-	                   rx_buffer[(i+11)%13] == 0x0D &&
-	                   rx_buffer[(i+12)%13] == 0x0A) {
-	                    header_idx = i;
-	                    break;
-	                }
-	            }
+            // ================= 📡 1. 默默清除硬體錯誤 =================
+            if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_ORE) != RESET) {
+                __HAL_UART_CLEAR_OREFLAG(&huart3);
+                volatile uint32_t tmpreg = huart3.Instance->DR; (void)tmpreg;
+            }
+            if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_NE) != RESET) {
+                __HAL_UART_CLEAR_NEFLAG(&huart3);
+            }
+            if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_FE) != RESET) {
+                __HAL_UART_CLEAR_FEFLAG(&huart3);
+            }
 
+            // ================= 🧠 2. 非同步追蹤與解析 =================
+            uint16_t write_ptr = 0;
+            if (huart3.hdmarx != NULL) {
+                write_ptr = RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(huart3.hdmarx);
+                if (write_ptr == RX_BUF_SIZE) write_ptr = 0; // 防呆
+            }
 
+            // 🌟 環形緩衝區的魔術
+            uint16_t bytes_available = 0;
+            if (write_ptr >= read_ptr) {
+                bytes_available = write_ptr - read_ptr;
+            } else {
+                bytes_available = RX_BUF_SIZE - read_ptr + write_ptr;
+            }
 
+            // 只要湊滿 13 Bytes，就開始滑動解析
+            while (bytes_available >= 13) {
+                // 使用 % RX_BUF_SIZE 確保跨越陣列尾端時能完美繞回頭部
+                if (rx_buf[read_ptr] == 0xAA &&
+                    rx_buf[(read_ptr + 1) % RX_BUF_SIZE] == 0x55 &&
+                    rx_buf[(read_ptr + 11) % RX_BUF_SIZE] == 0x0D &&
+                    rx_buf[(read_ptr + 12) % RX_BUF_SIZE] == 0x0A) {
 
-	            if (header_idx != -1) {
-	                // 抽出第 3 個 Byte (狀態碼)
-	                uint8_t status = rx_buffer[(header_idx + 2) % 13];
+                    // 成功抓到一包合法特徵碼
+                    uint8_t status = rx_buf[(read_ptr + 2) % RX_BUF_SIZE];
+                    (void)status; // 👈 加上這行，告訴編譯器「我知道有這個變數，不要煩我」
+                    data_converter.bytes[0] = rx_buf[(read_ptr + 3) % RX_BUF_SIZE];
+                    data_converter.bytes[1] = rx_buf[(read_ptr + 4) % RX_BUF_SIZE];
+                    data_converter.bytes[2] = rx_buf[(read_ptr + 5) % RX_BUF_SIZE];
+                    data_converter.bytes[3] = rx_buf[(read_ptr + 6) % RX_BUF_SIZE];
+                    float temp_X = data_converter.fval;
 
-	                // 完美還原 X 與 Y 的浮點數
-	                data_converter.bytes[0] = rx_buffer[(header_idx + 3) % 13];
-	                data_converter.bytes[1] = rx_buffer[(header_idx + 4) % 13];
-	                data_converter.bytes[2] = rx_buffer[(header_idx + 5) % 13];
-	                data_converter.bytes[3] = rx_buffer[(header_idx + 6) % 13];
-	                float temp_X = data_converter.fval;
+                    read_ptr = (read_ptr + 13) % RX_BUF_SIZE;
+                    bytes_available -= 13;
 
-	                data_converter.bytes[0] = rx_buffer[(header_idx + 7) % 13];
-	                data_converter.bytes[1] = rx_buffer[(header_idx + 8) % 13];
-	                data_converter.bytes[2] = rx_buffer[(header_idx + 9) % 13];
-	                data_converter.bytes[3] = rx_buffer[(header_idx + 10) % 13];
-	                float temp_Y = data_converter.fval;
+                    // 物理合理性防波堤
+                    if (!isnan(temp_X) && temp_X > -180.0f && temp_X < 180.0f) {
+                        last_rx_tick = HAL_GetTick(); // 🌟 收到健康封包，立刻刷新斷線計時器！
 
-	                (void)temp_Y;  // 🌟 加上這一行：告訴編譯器我們刻意不使用它，消除 Warning
+                        // 🔥🔥🔥 終極暴力破解：無視大腦板的 Status=0，直接強制啟動控制！
+                        is_brain_ready = 1;
 
-	                // 只有大腦說「我準備好了」，才允許更新座標
-	                // 🛡️ 核心修復：不僅要大腦說準備好了，還要確保送來的絕對不是 NaN！
-	                	                if (status == 1 && !isnan(temp_X)) {
-	                                        current_pitch = temp_X;
-	                                        is_brain_ready = 1;
-	                                        timeout_counter = 0; // 收到健康數字，計數器歸零
-	                	                } else {
-	                	                    // 🚨 如果收到 NaN 或狀態異常，立刻切斷動力，保護穿戴者！
-	                	                    is_brain_ready = 0;
-	                	                }
-	            } else {
-	                timeout_counter++;
-	                if (timeout_counter > 500) { // 50ms 沒收到完整封包，視為斷線
-	                    is_brain_ready = 0;
-	                }
-	            }
+                        float delta_pitch = temp_X - current_pitch;
+                        current_pitch = temp_X;
 
+                        float target_Kp = 0.0f;
+                        float target_tau = 0.0f;
 
-	            // ================= 🧠 智能控制核心 =================
-	            	            if (!is_brain_ready) {
-	            	                current_Kp = 0.0f;
-	            	                tau_ff_A = 0.0f;
-	            	                current_state = STATE_IDLE;
-	            	            } else {
-	            	                // 1. 計算角速度
-	            	                float delta_pitch = current_pitch - last_pitch;
-	            	                last_pitch = current_pitch;
+                        // 狀態機邏輯
+                        if (current_pitch < 15.0f && current_pitch > -15.0f) {
+                            current_state = STATE_IDLE;
+                        } else if (current_pitch > 45.0f && fabs(delta_pitch) < 0.2f) {
+                            current_state = STATE_HOLDING;
+                        } else if (delta_pitch > 0.1f) {
+                            current_state = STATE_BENDING_DOWN;
+                        } else if (delta_pitch < -0.1f) {
+                            current_state = STATE_RETURNING_UP;
+                        } else {
+                            if (current_state == STATE_IDLE) {
+                                current_state = STATE_BENDING_DOWN;
+                            }
+                        }
 
-	            	                float target_Kp = 0.0f;
-	            	                float target_tau = 0.0f;
+                        // 目標剛性與扭力
+                        switch (current_state) {
+                            case STATE_IDLE:
+                                target_Kp = 15.0f;
+                                target_tau = 0.0f;
+                                break;
+                            case STATE_BENDING_DOWN:
+                                target_Kp = 5.0f;
+                                target_tau = 0.5f * 9.8f * 0.175f * sinf(current_pitch * 3.14159f / 180.0f) * 0.8f;
+                                break;
+                            case STATE_HOLDING:
+                                target_Kp = 25.0f;
+                                target_tau = 0.5f * 9.8f * 0.175f * sinf(current_pitch * 3.14159f / 180.0f);
+                            break;
+                            case STATE_RETURNING_UP:
+                                target_Kp = 15.0f;
+                                target_tau = 0.5f * 9.8f * 0.175f * sinf(current_pitch * 3.14159f / 180.0f) + 3.0f;
+                                break;
+                        }
 
-	            	                // 2. 狀態判斷 (加入 18度 防抖死區)
-	            	                if (current_pitch < 15.0f && current_pitch > -15.0f) {
-	            	                    current_state = STATE_IDLE;
-	            	                } else if (current_pitch > 60.0f && fabs(delta_pitch) < 0.2f) {
-	            	                    current_state = STATE_HOLDING;
-	            	                } else if (delta_pitch > 0.1f) {
-	            	                    current_state = STATE_BENDING_DOWN;
-	            	                } else if (delta_pitch < -0.1f) {
-	            	                    current_state = STATE_RETURNING_UP;
-	            	                }
+                        float smooth_factor = 0.5f;
+                        current_Kp += (target_Kp - current_Kp) * smooth_factor;
+                        tau_ff_A += (target_tau - tau_ff_A) * smooth_factor;
 
-	            	                // 3. 狀態執行：指派【目標】剛性與扭力
-	            	                switch (current_state) {
-	            	                    case STATE_IDLE:
-	            	                        target_Kp = 15.0f; // 強化站直時的支撐力
-	            	                        target_tau = 0.0f;
-	            	                        break;
-	            	                    case STATE_BENDING_DOWN:
-	            	                        target_Kp = 5.0f;
-	            	                        // 彎腰時提供 50% 的重力補償支撐
-	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) * 0.5f;
-	            	                        break;
-	            	                    case STATE_HOLDING:
-	            	                        target_Kp = 25.0f;
-	            	                        // 懸停時提供 100% 滿載的重力補償
-	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f);
-	            	                        break;
-	            	                    case STATE_RETURNING_UP:
-	            	                        target_Kp = 15.0f;
-	            	                        // 起身時提供重力補償 + 額外 2.0Nm 拉起輔助力
-	            	                        target_tau = m_B * g * L1 * sinf(current_pitch * 3.14159f / 180.0f) + 2.0f;
-	            	                        break;
-	            	                }
+                        // 雙軸 IK 運算
+                        float motor_cmd_A;
+                        float motor_cmd_B;
+                        float L1_len = 0.20f;
+                        float L2_len = 0.075f;
+                        float base_radius = 0.24f;
 
-	            	                // 4. 🛡️ 平滑過渡濾波器 (防止馬達因電流突波當機)
-	            	                float smooth_factor = 0.3f;
-	            	                current_Kp += (target_Kp - current_Kp) * smooth_factor;
-	            	                tau_ff_A += (target_tau - tau_ff_A) * smooth_factor;
-	            	            }
+                        if (is_ik_init == 0) {
+                            float cos_phi_zero = (L1_len*L1_len + L2_len*L2_len - base_radius*base_radius) / (2 * L1_len * L2_len);
+                            if(cos_phi_zero > 1.0f) cos_phi_zero = 1.0f;
+                            if(cos_phi_zero < -1.0f) cos_phi_zero = -1.0f;
+                            theta_B_zero = 3.14159f - acosf(cos_phi_zero);
+                            is_ik_init = 1;
+                        }
 
-	            	            // ================= 🦴 雙軸脊椎補償 IK =================
-	            	            float motor_cmd_A;
-	            	            float motor_cmd_B;
+                        if (current_state == STATE_IDLE) {
+                            motor_cmd_A = motorA_offset;
+                            motor_cmd_B = motorB_offset;
+                        } else {
+                            motor_cmd_A = -(current_pitch * 3.14159f / 180.0f) + motorA_offset;
+                            float elongation = (current_pitch / 90.0f) * 0.03f;
+                            if (elongation < 0.0f) elongation = 0.0f;
+                            float current_radius = base_radius + elongation;
 
-	            	            if (current_state == STATE_IDLE) {
-	            	                // 站立時：消除累積誤差，強制雙馬達鎖定絕對零度
-	            	                motor_cmd_A = motorA_offset;
-	            	                motor_cmd_B = motorB_offset;
-	            	            } else {
-	            	                // 彎腰時：啟動脊椎動態延長方程式
-	            	                // ⚠️ 請修改以下 L1, L2 參數以符合您的實體機構長度 (單位：公尺)
-	            	                float L1 = 0.20f; // A 馬達到 B 馬達的連桿長度
-	            	                float L2 = 0.075f; // B 馬達到肩膀綁帶的連桿長度
+                            float cos_phi = (L1_len*L1_len + L2_len*L2_len - current_radius*current_radius) / (2 * L1_len * L2_len);
+                            if(cos_phi > 1.0f) cos_phi = 1.0f;
+                            if(cos_phi < -1.0f) cos_phi = -1.0f;
 
-	            	                // 站直時的「初始直線距離」(必須小於 L1+L2，讓連桿保持預先彎曲的彈性空間)
-	            	                float base_radius = 0.24f;
+                            motor_cmd_B = -((3.14159f - acosf(cos_phi)) - theta_B_zero) + motorB_offset;
+                        }
 
-	            	                // 脊椎拉長量：彎腰越深，半徑越長 (最大釋放 0.06m 長度)
-	            	                float elongation = (current_pitch / 90.0f) * 0.03f;
-	            	                if (elongation < 0.0f) elongation = 0.0f;
-	            	                float current_radius = base_radius + elongation;
+                        if (is_cmd_init == 0) {
+                            smooth_cmd_A = motorA_offset;
+                            smooth_cmd_B = motorB_offset;
+                            is_cmd_init = 1;
+                        }
 
-	            	                // 目標座標映射
-	            	                float current_pitch_rad = current_pitch * 3.14159f / 180.0f;
-	            	                float target_X = current_radius * cosf(current_pitch_rad);
-	            	                float target_Y = current_radius * sinf(current_pitch_rad);
+                        smooth_cmd_A += (motor_cmd_A - smooth_cmd_A) * 0.80f;
+                        smooth_cmd_B += (motor_cmd_B - smooth_cmd_B) * 0.10f;
 
-	            	                // 逆向運動學運算
-	            	                float cos_theta_B = (target_X*target_X + target_Y*target_Y - L1*L1 - L2*L2) / (2 * L1 * L2);
-	            	                if(cos_theta_B > 1.0f) cos_theta_B = 1.0f;   // 防止數學運算出現 NaN
-	            	                if(cos_theta_B < -1.0f) cos_theta_B = -1.0f;
+                        // 🚀 發送指令
+                        AK10_9_SendCommand(&hcan1, 0x01, smooth_cmd_A, 0.0f, current_Kp, 1.5f, tau_ff_A);
+                        AK10_9_SendCommand(&hcan2, 0x01, smooth_cmd_B, 0.0f, current_Kp * 0.4f, 1.0f, 0.0f);
+                    }
+                } else {
+                    // 找不到標頭，滑動 1 Byte 繼續找
+                    read_ptr = (read_ptr + 1) % RX_BUF_SIZE;
+                    bytes_available--;
+                }
+            }
 
-	            	                float theta_B = acosf(cos_theta_B);
-	            	                float theta_A = atan2f(target_Y, target_X) - atan2f(L2 * sinf(theta_B), L1 + L2 * cosf(theta_B));
+            // ================= 🛡️ 3. 非阻塞式斷線保護 =================
+            if (HAL_GetTick() - last_rx_tick > 150) {
+                is_brain_ready = 0;
+                current_Kp = 0.0f;
+                tau_ff_A = 0.0f;
 
-	            	                // 計算最終角度 (請依據您的實體轉向決定是否保留負號)
-	            	                motor_cmd_A = (-theta_A) + motorA_offset;
-	            	                motor_cmd_B = (theta_B) + motorB_offset;
-	            	            }
+                if (HAL_GetTick() - last_can_tx_tick >= 10) {
+                    AK10_9_SendCommand(&hcan1, 0x01, smooth_cmd_A, 0.0f, 0.0f, 0.1f, 0.0f);
+                    AK10_9_SendCommand(&hcan2, 0x01, smooth_cmd_B, 0.0f, 0.0f, 0.1f, 0.0f);
+                    last_can_tx_tick = HAL_GetTick();
+                }
+            }
 
-	            	            // 🌟 終極修復：對目標角度進行「無段變速平滑 (EMA 濾波)」
-	            	            // 即使狀態切換，馬達也只會柔和地滑過去，徹底消除您看到的抽搐！
-	            	            static float smooth_cmd_A = 0.0f;
-	            	            static float smooth_cmd_B = 0.0f;
-	            	            static int is_cmd_init = 0;
+            // ================= 🖨️ 4. 神級偵錯 Printf =================
+            static uint32_t last_print_tick = 0;
+            if (HAL_GetTick() - last_print_tick >= 100) {
+                heartbeat++;
+                if (is_brain_ready) {
+                    printf("💓[%d] State: %d | Pitch: %.1f | CmdA: %.1f | CmdB: %.1f | Kp: %.2f | RX: %d\r\n",
+                           heartbeat, current_state, current_pitch, smooth_cmd_A, smooth_cmd_B, current_Kp, write_ptr);
+                } else {
+                    if (HAL_GetTick() - last_rx_tick <= 150) {
+                        printf("🔗[%d] 通訊正常！暖機中(Status=0) | RX指標: %d\r\n", heartbeat, write_ptr);
+                    } else {
+                        printf("❌[%d] 實體斷線！150ms沒封包 | RX: %d | Kp: 0.00\r\n", heartbeat, write_ptr);
+                    }
+                }
+                last_print_tick = HAL_GetTick();
+            }
 
-	            	            if (is_cmd_init == 0) {
-	            	            	smooth_cmd_A = motorA_offset;
-	            	            	smooth_cmd_B = motorB_offset;
-	            	            	is_cmd_init = 1;
-	            	            }
-
-	            	            // 🌟 修正 2：拆分神經反應速度 (解決 B 馬達太快、甩動的問題)
-	            	            float angle_smooth_factor_A = 0.40f; // A 馬達 (髖部主關節)：反應敏捷，負責主要支撐
-	            	            float angle_smooth_factor_B = 0.03f; // B 馬達 (背部末端)：極度緩慢柔和，像油壓缸一樣慢慢伸直
-
-	            	            //float angle_smooth_factor = 0.4f; // 數值越小越柔和 (可微調)
-	            	            smooth_cmd_A += (motor_cmd_A - smooth_cmd_A) * angle_smooth_factor_A;
-	            	            smooth_cmd_B += (motor_cmd_B - smooth_cmd_B) * angle_smooth_factor_B;
-
-	            	            // ================= 🚀 雙馬達指令發送 =================
-	            	            // 發送給 A 馬達 (主力髖關節)
-	            	            AK10_9_SendCommand(&hcan1, 0x01, motor_cmd_A, 0.0f, current_Kp, 1.5f, tau_ff_A);
-	            	            HAL_Delay(1); // 確保 CAN bus 有時間消化
-
-	            	            // 發送給 B 馬達 (背部補償微調)
-	            	            // B 馬達不需負擔重力，剛性減半，無 Feedforward 扭力
-	            	            float current_Kp_B = current_Kp * 0.4f;
-	            	            AK10_9_SendCommand(&hcan2, 0x01, motor_cmd_B, 0.0f, current_Kp_B, 1.0f, 0.0f);
-	            	            HAL_Delay(1);
-
-	            // 🌟 列印資訊更新：改印狀態機與 Pitch 角度
-	            	            static int print_counter = 0;
-	            	            print_counter++;
-	            	            if (print_counter >= 50) {
-	            	                if (is_brain_ready) {
-	            	                    float actual_A_deg = motorA_actual_pos * 180.0f / 3.14159f;
-	                                    // 印出：狀態(0~3)、大腦算出的Pitch、馬達收到的目標、馬達實際角度、當前剛性
-	            	                    printf("✅ 狀態: %d | Pitch: %.1f | Cmd: %.1f | Actual: %.1f | Kp: %.2f\r\n",
-	                                            current_state, current_pitch, motor_cmd_A, actual_A_deg, current_Kp);
-	            	                } else {
-	            	                    printf("⏳ 等待大腦... Kp: %.2f\r\n", current_Kp);
-	            	                }
-	            	                print_counter = 0;
-	            	            }
-	          }
+          }
   /* USER CODE END 3 */
 }
 
@@ -568,7 +571,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 921600;
+  huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;

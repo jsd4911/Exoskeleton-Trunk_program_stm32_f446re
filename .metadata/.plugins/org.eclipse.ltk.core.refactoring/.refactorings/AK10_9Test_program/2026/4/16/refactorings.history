@@ -1,4 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<session version="1.0">
-<refactoring comment="Rename resource &apos;AK10_9Test_program/Core/Src/AK10_9_Driver&apos; to &apos;AK10_9_Driver.c&apos;" description="Rename resource &apos;AK10_9_Driver&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Src/AK10_9_Driver" name="AK10_9_Driver.c" stamp="1776222465475" updateReferences="true"/>
-</session>

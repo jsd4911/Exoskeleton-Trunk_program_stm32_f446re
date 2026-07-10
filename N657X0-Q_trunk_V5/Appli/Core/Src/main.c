@@ -4,6 +4,9 @@
   * @file           : main.c
   * @brief          : Complete BNO085 Attitude Engine for STM32N657X0 (I2C4)
   * : Uses robust 32-Byte Single-Transaction SHTP Receiver.
+  * : Added Cold Boot Baudrate Sync and USB-VCP Enumeration Delay.
+  * : Strengthened with Handoff Synchronization & Clear Interrupt on Boot.
+  * : Fixed Cold Boot VTOR deadlock and reordered USART1 initialization.
   ******************************************************************************
   * @attention
   *
@@ -170,7 +173,17 @@ void BNO085_ReadAndParse(void) {
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+  // 🌟 [重中之重] 物理性強制定向中斷向量表 (VTOR)
+  // 避免冷啟動時因為 system_stm32n6xx.c 中未啟用 USER_VECT_TAB_ADDRESS
+  // 導致 HAL_Init() 一開啟 SysTick 中斷 CPU 就因為找不到向量而當場卡死！
+  #if defined (__ARM_FEATURE_CMSE) && (__ARM_FEATURE_CMSE == 3U)
+    SCB->VTOR = 0x24000400; // 安全 AXI SRAM1 起點
+  #else
+    SCB->VTOR = 0x34000400; // 非安全 AXI SRAM1 起點
+  #endif
 
+  // 🌟 [冷啟動關鍵防線] 強制讓 CMSIS 與 HAL 庫讀取並同步當前系統時鐘變數
+  SystemCoreClockUpdate();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -186,12 +199,25 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_I2C4_Init();
+
+  // 🚀 [除錯優先] 將 USART1 調整至最優先初始化，確保任何開機日誌皆能第一時間送出
   MX_USART1_UART_Init();
+
   /* USER CODE BEGIN 2 */
 
-  HAL_Delay(1000);
-  printf("\r\n=== STM32N657X0 BNO085 姿態解算引擎啟動 ===\r\n");
+  // 🌟 [冷啟動列舉防護延遲] 故意等待 1.5 秒
+  // 給予電腦主機充裕的時間完成 VCP (COM8) 的 USB 枚舉與連接建立
+  HAL_Delay(1500);
+
+  printf("\r\n==============================================\r\n");
+  printf("=== STM32N657X0 BNO085 姿態解算引擎啟動 ===\r\n");
+  printf("==============================================\r\n");
+  printf("[SYS] 向量表偏移暫存器 (VTOR) 已強制設定為: 0x%08lX\r\n", SCB->VTOR);
+  printf("[SYS] 系統當前核心時脈 (Core Clock): %lu Hz\r\n", SystemCoreClock);
+  printf("==============================================\r\n");
+
+  // 初始化 I2C4 與 BNO085
+  MX_I2C4_Init();
 
   // 1. 強制重置 BNO085 (硬體引腳拉低復位)
   printf("[BNO085] 正在執行硬體重置...\r\n");
@@ -200,6 +226,10 @@ int main(void)
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);   // RST 拉高放開
   HAL_Delay(600);                                        // 給感測器充裕的開機引導時間
   printf("[BNO085] 硬體重置完成。\r\n");
+
+  // [安全考量] 清除可能在引導或上電期間殘留的懸空 EXTI 中斷標誌，避免一開啟就卡死
+  __HAL_GPIO_EXTI_CLEAR_FALLING_IT(GPIO_PIN_11);
+  bno_data_ready = 0;
 
   // 2. I2C 總線診斷掃描
   I2C4_Scan();

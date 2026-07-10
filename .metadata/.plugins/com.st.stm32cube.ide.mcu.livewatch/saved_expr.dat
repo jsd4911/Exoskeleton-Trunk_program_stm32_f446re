@@ -1,9 +1,0 @@
-motor_pos
-motor_vel
-motor_tor
-current_error
-error_sum
-cc
-target_pos
-motor_mode
-is_calibrated

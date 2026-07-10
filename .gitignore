@@ -11,3 +11,5 @@ Release/
 *.log
 .mxproject
 .venv/
+.metadata/
+echo "STM32N6-GettingStarted-ImageClassification-main.zip" >> .gitignore

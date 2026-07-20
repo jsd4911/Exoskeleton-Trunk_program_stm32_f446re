@@ -39,6 +39,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define BNO08x_ADDR (0x4B << 1) // STM32 I2C 寫入位址 (0x96)
+#define ADC_FULL_SCALE             4095.0f
+#define ARDUINO_A0_FULL_SCALE_V    3.3f
+#define ADC_LOG_INTERVAL_MS        250U
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -52,6 +55,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+ADC_HandleTypeDef hadc1;
+
 I2C_HandleTypeDef hi2c4;
 
 UART_HandleTypeDef huart1;
@@ -61,6 +66,9 @@ float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
 uint8_t isStreaming = 0;
 uint32_t lastCmdTick = 0;
 volatile uint8_t bno_data_ready = 0; // EXTI11 中斷旗標
+uint32_t adc_raw_val = 0;
+float pressure_voltage = 0.0f;
+uint32_t lastAdcTick = 0;
 
 // BNO085 訂閱指令 (要求以 20Hz 速率回報 Rotation Vector 姿態)
 // 封包長度 21 位元組，通道 2 (Control)
@@ -74,11 +82,14 @@ uint8_t setFeatureCmd[21] = {
 
 /* Private function prototypes -----------------------------------------------*/
 static void MX_GPIO_Init(void);
-static void MX_I2C4_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_I2C4_Init(void);
+static void MX_ADC1_Init(void);
+static void SystemIsolation_Config(void);
 /* USER CODE BEGIN PFP */
 void I2C4_Scan(void);
 void BNO085_ReadAndParse(void);
+uint8_t Read_Keyes_Pressure_PA8(uint32_t *raw, float *voltage);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -164,6 +175,28 @@ void BNO085_ReadAndParse(void) {
         }
     }
 }
+
+// 讀取 Arduino A0 對應的 PA8 / ADC1_INP5
+uint8_t Read_Keyes_Pressure_PA8(uint32_t *raw, float *voltage) {
+    HAL_StatusTypeDef status;
+
+    status = HAL_ADC_Start(&hadc1);
+    if (status != HAL_OK) {
+        HAL_ADC_Stop(&hadc1);
+        return 0;
+    }
+
+    status = HAL_ADC_PollForConversion(&hadc1, 20);
+    if (status != HAL_OK) {
+        HAL_ADC_Stop(&hadc1);
+        return 0;
+    }
+
+    *raw = HAL_ADC_GetValue(&hadc1);
+    *voltage = ((float)(*raw) * ARDUINO_A0_FULL_SCALE_V) / ADC_FULL_SCALE;
+    HAL_ADC_Stop(&hadc1);
+    return 1;
+}
 /* USER CODE END 0 */
 
 /**
@@ -172,6 +205,7 @@ void BNO085_ReadAndParse(void) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
   // 🌟 [重中之重] 物理性強制定向中斷向量表 (VTOR)
   // 避免冷啟動時因為 system_stm32n6xx.c 中未啟用 USER_VECT_TAB_ADDRESS
@@ -190,7 +224,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  // STM32N657 的 ADC 類比電源必須先啟用，否則 PA8 可能固定讀到 0。
+  HAL_PWREx_EnableVddA();
   /* USER CODE END Init */
 
   /* USER CODE BEGIN SysInit */
@@ -199,10 +234,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-
-  // 🚀 [除錯優先] 將 USART1 調整至最優先初始化，確保任何開機日誌皆能第一時間送出
   MX_USART1_UART_Init();
+  MX_I2C4_Init();
+  SystemIsolation_Config();
 
+  // 明確開啟 PA8 與 ADC1/2 共用時鐘，再初始化 ADC1。
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_ADC12_CLK_ENABLE();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   // 🌟 [冷啟動列舉防護延遲] 故意等待 1.5 秒
@@ -210,11 +249,16 @@ int main(void)
   HAL_Delay(1500);
 
   printf("\r\n==============================================\r\n");
-  printf("=== STM32N657X0 BNO085 姿態解算引擎啟動 ===\r\n");
+  printf("=== STM32N657X0 BNO085 + PA8 ADC 引擎啟動 ===\r\n");
   printf("==============================================\r\n");
   printf("[SYS] 向量表偏移暫存器 (VTOR) 已強制設定為: 0x%08lX\r\n", SCB->VTOR);
   printf("[SYS] 系統當前核心時脈 (Core Clock): %lu Hz\r\n", SystemCoreClock);
   printf("==============================================\r\n");
+
+  // ADC1 單端校正；輸出狀態方便確認 PA8 的 ADC 硬體是否成功就緒。
+  HAL_StatusTypeDef adc_cal_status = HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  printf("[ADC1] 校正結果: status=%d | state=0x%08lX | error=0x%08lX\r\n",
+         (int)adc_cal_status, HAL_ADC_GetState(&hadc1), HAL_ADC_GetError(&hadc1));
 
   // 初始化 I2C4 與 BNO085
   MX_I2C4_Init();
@@ -264,8 +308,107 @@ int main(void)
         bno_data_ready = 0; // 清除軟體中斷旗標
         BNO085_ReadAndParse(); // 執行高效解算
     }
+
+    // --- 任務 C：定時讀取 Keyes 壓力感測器 (Arduino A0 = PA8 / ADC1_INP5) ---
+    if ((HAL_GetTick() - lastAdcTick) >= ADC_LOG_INTERVAL_MS)
+    {
+        lastAdcTick = HAL_GetTick();
+        if (Read_Keyes_Pressure_PA8(&adc_raw_val, &pressure_voltage)) {
+            printf("[PA8/A0] RAW: %4lu | Input: %.3f V\r\n",
+                   adc_raw_val, pressure_voltage);
+        } else {
+            printf("[PA8/A0] ADC 讀取失敗 | state=0x%08lX | error=0x%08lX\r\n",
+                   HAL_ADC_GetState(&hadc1), HAL_ADC_GetError(&hadc1));
+        }
+    }
   }
   /* USER CODE END 3 */
+}
+
+/**
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+
+  /** Initializes the peripherals clock
+  */
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_TIM;
+  PeriphClkInitStruct.TIMPresSelection = RCC_TIMPRES_DIV1;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_MultiModeTypeDef multimode = {0};
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.GainCompensation = 0;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DR;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure the ADC multi-mode
+  */
+  multimode.Mode = ADC_MODE_INDEPENDENT;
+  if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_5;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_246CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -275,6 +418,7 @@ int main(void)
   */
 static void MX_I2C4_Init(void)
 {
+
   /* USER CODE BEGIN I2C4_Init 0 */
 
   /* USER CODE END I2C4_Init 0 */
@@ -312,6 +456,65 @@ static void MX_I2C4_Init(void)
   /* USER CODE BEGIN I2C4_Init 2 */
 
   /* USER CODE END I2C4_Init 2 */
+
+}
+
+/**
+  * @brief RIF Initialization Function
+  * @param None
+  * @retval None
+  */
+  static void SystemIsolation_Config(void)
+{
+
+  /* USER CODE BEGIN RIF_Init 0 */
+
+  /* USER CODE END RIF_Init 0 */
+
+  /* set all required IPs as secure privileged */
+  __HAL_RCC_RIFSC_CLK_ENABLE();
+
+  // ADC1/2 共用 ADC12 RIF；須在 MX_ADC1_Init() 前授予安全特權存取。
+  HAL_RIF_RISC_SetSlaveSecureAttributes(
+      RIF_RISC_PERIPH_INDEX_ADC12,
+      RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+
+  RIMC_MasterConfig_t RIMC_master = {0};
+  RIMC_master.MasterCID = RIF_CID_1;
+  RIMC_master.SecPriv = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV;
+
+  /*RIMC configuration*/
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_ETH1, &RIMC_master);
+
+  /* RIF-Aware IPs Config */
+
+  /* set up GPIO configuration */
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_8,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_7,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOC,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_12,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_13,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_14,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOH,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+
+  /* USER CODE BEGIN RIF_Init 1 */
+
+  /* USER CODE END RIF_Init 1 */
+  /* USER CODE BEGIN RIF_Init 2 */
+
+  /* USER CODE END RIF_Init 2 */
+
 }
 
 /**
@@ -321,6 +524,7 @@ static void MX_I2C4_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -358,6 +562,7 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -368,6 +573,9 @@ static void MX_USART1_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
@@ -377,22 +585,42 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : PD12 (RST Reset Pin) */
+  /*Configure GPIO pin : PD12 */
   GPIO_InitStruct.Pin = GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PE11 (INT Interrupt Pin) */
+  /*Configure GPIO pin : PE11 */
   GPIO_InitStruct.Pin = GPIO_PIN_11;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PA9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA8 (Arduino A0 / ADC1_INP5) */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = 0;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI11_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI11_IRQn);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -418,7 +646,18 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

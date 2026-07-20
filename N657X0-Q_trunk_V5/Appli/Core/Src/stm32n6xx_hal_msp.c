@@ -99,10 +99,8 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
   /** Initializes the peripherals clock
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-    PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_IC8;
-    PeriphClkInitStruct.AdcDivider = 25;
-    PeriphClkInitStruct.ICSelection[RCC_IC8].ClockSelection = RCC_ICCLKSOURCE_PLL2;
-    PeriphClkInitStruct.ICSelection[RCC_IC8].ClockDivider = 1;
+    PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_HSI;
+    PeriphClkInitStruct.AdcDivider = 1;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();
@@ -113,12 +111,9 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**ADC1 GPIO Configuration
-    PA10     ------> ADC1_INP11
-    PA11     ------> ADC1_INP12
-    PA11     ------> ADC1_INN11
     PA8     ------> ADC1_INP5
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_10|UCPD1_VSENSE_Pin|GPIO_PIN_8;
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -148,12 +143,9 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* hadc)
     __HAL_RCC_ADC12_CLK_DISABLE();
 
     /**ADC1 GPIO Configuration
-    PA10     ------> ADC1_INP11
-    PA11     ------> ADC1_INP12
-    PA11     ------> ADC1_INN11
     PA8     ------> ADC1_INP5
     */
-    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_10|UCPD1_VSENSE_Pin|GPIO_PIN_8);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_8);
 
     /* USER CODE BEGIN ADC1_MspDeInit 1 */
 

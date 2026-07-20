@@ -4,16 +4,6 @@
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -23,7 +13,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
-#include <math.h>          // 新增：用來算 atan2 和 asin
+#include <math.h>          // 用來算 atan2 和 asin
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -73,65 +63,17 @@ static void MX_USART3_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// 🌟 1D 動態卡爾曼濾波器結構體
-typedef struct {
-    float q; // 過程雜訊 (越小越相信物理慣性)
-    float r; // 測量雜訊 (對感測器的不信任度)
-    float x; // 狀態估計值 (當前平滑角度)
-    float p; // 估計誤差共變異數
-    float k; // 卡爾曼增益
-    int initialized; // 初始化標記
-} KalmanFilter1D;
 
-// 初始化三個軸的濾波器實體 (設定值與您 Python 版完全一致)
-KalmanFilter1D kf_roll  = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
-KalmanFilter1D kf_pitch = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
-KalmanFilter1D kf_yaw   = {0.005f, 0.5f, 0.0f, 1.0f, 0.0f, 0};
+// 【非常重要】讓 printf 可以把文字輸出到 Terminal 的重導向函數
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
 
-// 🌟 卡爾曼濾波器更新函式
-// 參數: 濾波器指標, 測量值, 動態R值(抗震時會變大)
-float Kalman_Update(KalmanFilter1D* kf, float measurement, float dynamic_r) {
-    if (!kf->initialized) {
-        kf->x = measurement;
-        kf->initialized = 1;
-        return kf->x;
-    }
-
-    // 1. 預測 (Predict)
-    kf->p = kf->p + kf->q;
-
-    // 2. 更新 (Update)
-    kf->k = kf->p / (kf->p + dynamic_r);
-    kf->x = kf->x + kf->k * (measurement - kf->x);
-    kf->p = (1.0f - kf->k) * kf->p;
-
-    return kf->x;
-}
-
-// 🌟 解除相角折疊函式 (解決 +-180 度突波)
-float unwrap(float curr, float prev) {
-    float diff = fmodf((curr - prev + 180.0f), 360.0f);
-    if (diff < 0) diff += 360.0f;
-    return prev + (diff - 180.0f);
-}
-
-// 記錄解折疊後的連續角度與初始標記
-float unwrapped_r = 0.0f, unwrapped_p = 0.0f, unwrapped_y = 0.0f;
-int is_unwrapped_init = 0;
-
-// 晃動觸發閾值 (與 Python 一致)
-#define SHAKE_THRESHOLD 5.0f
-
-// 🌟 宣告用來轉換 float 與 byte 陣列的共用體 (Union)
-union {
-    uint8_t bytes[4];
-    float fval;
-} data_converter;
-
-int _write(int file, char *ptr, int len) {
-    // 透過 USART2 把字元一個一個推給電腦
-    HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, 100);
-    return len;
+PUTCHAR_PROTOTYPE {
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 100);
+  return ch;
 }
 
 /* USER CODE END 0 */
@@ -142,7 +84,6 @@ int _write(int file, char *ptr, int len) {
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -168,195 +109,38 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+
   /* USER CODE BEGIN 2 */
 
-  HAL_Delay(1000);
-    printf("\r\n=== BNO085 姿態解算啟動 ===\r\n");
+  // 剛開機稍微等一下，讓系統穩定
+  HAL_Delay(500);
+  printf("\r\n--- BNO085 I2C 掃描測試 ---\r\n");
 
-    // 硬體重置 BNO085
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-    HAL_Delay(50);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-    HAL_Delay(500);
+  // 1. 【防當機神器】強制重置 BNO085
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET); // RST 拉低
+  HAL_Delay(50);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);   // RST 拉高 (放開)
+  HAL_Delay(500);                                       // 等待感測器完全開機
 
-    if (HAL_I2C_IsDeviceReady(&hi2c1, BNO08x_ADDR, 5, 100) == HAL_OK) {
-        printf("-> BNO085 (0x4B) 連線成功！準備接收資料...\r\n");
-    }
+  // 2. 掃描 BNO085 的兩個可能位址
+  printf("正在掃描 I2C 總線...\r\n");
+
+  if (HAL_I2C_IsDeviceReady(&hi2c1, (0x4A << 1), 5, 100) == HAL_OK) {
+      printf("太棒了！SUCCESS: BNO085 found at 0x4A!\r\n");
+  }
+  else if (HAL_I2C_IsDeviceReady(&hi2c1, (0x4B << 1), 5, 100) == HAL_OK) {
+      printf("太棒了！SUCCESS: BNO085 found at 0x4B!\r\n");
+  }
+  else {
+      printf("錯誤：找不到感測器 (ERROR: No device detected)。請檢查接線。\r\n");
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  // --- 任務 A：自動喚醒機制 ---
-	        // 如果還沒收到資料，每 2 秒瘋狂敲門一次
-	        if (isStreaming == 0 && (HAL_GetTick() - lastCmdTick > 2000)) {
-	            printf("-> 發送啟動指令給 BNO085...\r\n");
-	            HAL_I2C_Master_Transmit(&hi2c1, BNO08x_ADDR, setFeatureCmd, 21, 100);
-	            lastCmdTick = HAL_GetTick();
-	        }
-
-	        // --- 任務 B：資料接收與解算 ---
-	        // 當 INT 腳位 (PB0) 被拉低時，代表感測器有話要說
-	        if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0) == GPIO_PIN_RESET)
-	        {
-	            uint8_t header[4];
-	            if (HAL_I2C_Master_Receive(&hi2c1, BNO08x_ADDR, header, 4, 100) == HAL_OK)
-	            {
-	                uint16_t length = ((header[1] << 8) | header[0]) & 0x7FFF;
-	                uint8_t channel = header[2];
-
-	                if (length > 0 && length <= 512)
-	                {
-	                    uint8_t shtpData[512];
-	                    if (HAL_I2C_Master_Receive(&hi2c1, BNO08x_ADDR, shtpData, length, 100) == HAL_OK)
-	                    {
-	                        // 判斷是否為 Rotation Vector (通道 3, 且 Feature ID 為 0x05)
-	                        if (channel == 3 && shtpData[9] == 0x05)
-	                        {
-	                            isStreaming = 1; // 標記為成功，停止奪命連環呼叫
-
-	                            // 提取四元數原始資料
-	                            int16_t i_raw = (shtpData[14] << 8) | shtpData[13];
-	                            int16_t j_raw = (shtpData[16] << 8) | shtpData[15];
-	                            int16_t k_raw = (shtpData[18] << 8) | shtpData[17];
-	                            int16_t r_raw = (shtpData[20] << 8) | shtpData[19];
-
-	                            float qI = (float)i_raw / 16384.0f;
-	                            float qJ = (float)j_raw / 16384.0f;
-	                            float qK = (float)k_raw / 16384.0f;
-	                            float qR = (float)r_raw / 16384.0f;
-
-	                            // 四元數轉歐拉角 (Roll, Pitch, Yaw)
-	                            float sqI = qI * qI, sqJ = qJ * qJ, sqK = qK * qK;
-
-	                            float roll_rad  = atan2(2.0f * (qR * qI + qJ * qK), 1.0f - 2.0f * (sqI + sqJ));
-	                            // 🛡️ 核心修復：根除 NaN 毒藥的源頭！
-	                            float sinp = 2.0f * (qR * qJ - qK * qI);
-	                            if (sinp > 1.0f) sinp = 1.0f;   // 強制限制上限
-	                            if (sinp < -1.0f) sinp = -1.0f; // 強制限制下限
-	                            float pitch_rad = asin(sinp);
-	                            float yaw_rad   = atan2(2.0f * (qR * qK + qI * qJ), 1.0f - 2.0f * (sqJ + sqK));
-
-	                            // 弧度轉角度
-	                            roll  = roll_rad  * 180.0f / 3.14159265f;
-	                            pitch = pitch_rad * 180.0f / 3.14159265f;
-	                            yaw   = yaw_rad   * 180.0f / 3.14159265f;
-
-	                            // 🌟 核心：C 語言版解折疊與動態卡爾曼濾波 🌟
-
-	                            // 🛡️ 終極裝甲：如果真的還是出現 NaN，直接丟棄這包資料，絕對不准進入濾波器！
-	                            if (isnan(pitch) || isnan(roll) || isnan(yaw)) {
-	                            	continue;
-	                            }
-	                            float final_roll, final_pitch, final_yaw;
-
-
-	                            if (!is_unwrapped_init) {
-	                            // 第一次讀取，初始化解折疊記憶與卡爾曼濾波器
-	                            unwrapped_r = roll;
-	                            unwrapped_p = pitch;
-	                            unwrapped_y = yaw;
-
-	                            final_roll  = Kalman_Update(&kf_roll, roll, kf_roll.r);
-	                            final_pitch = Kalman_Update(&kf_pitch, pitch, kf_pitch.r);
-	                            final_yaw   = Kalman_Update(&kf_yaw, yaw, kf_yaw.r);
-
-	                            is_unwrapped_init = 1;
-	                            } else {
-	                            // 1. 解除相角突波
-	                            float r = unwrap(roll, unwrapped_r);
-	                            float p = unwrap(pitch, unwrapped_p);
-	                            float y = unwrap(yaw, unwrapped_y);
-
-	                            // 2. 計算單幀真實角速度 (無延遲)
-	                            float delta_raw_r = fabsf(r - unwrapped_r);
-	                            float delta_raw_p = fabsf(p - unwrapped_p);
-	                            float delta_raw_y = fabsf(y - unwrapped_y);
-
-	                            // 更新記憶體
-	                            unwrapped_r = r;
-	                            unwrapped_p = p;
-	                            unwrapped_y = y;
-
-	                            // 3. 判斷是否受到劇烈震盪，動態調整 R 值 (抗震防禦)
-	                            float dyn_r_roll  = (delta_raw_r > SHAKE_THRESHOLD) ? 50.0f : kf_roll.r;
-	                            float dyn_r_pitch = (delta_raw_p > SHAKE_THRESHOLD) ? 50.0f : kf_pitch.r;
-	                            float dyn_r_yaw   = (delta_raw_y > SHAKE_THRESHOLD) ? 50.0f : kf_yaw.r;
-
-	                            // 4. 執行卡爾曼濾波更新
-	                            final_roll  = Kalman_Update(&kf_roll, r, dyn_r_roll);
-	                            final_pitch = Kalman_Update(&kf_pitch, p, dyn_r_pitch);
-	                            final_yaw   = Kalman_Update(&kf_yaw, y, dyn_r_yaw);
-	                            }
-
-	                            // 🌟 見證奇蹟的時刻：印出濾波後的平滑角度！
-	                            // (開啟此行可用 Serial Plotter 觀看極度平滑的曲線)
-	                            // printf("%.2f,%.2f,%.2f\r\n", final_roll, final_pitch, final_yaw);
-
-	                            // 為了檢查濾波效果，我們先印出 "原始Pitch" 與 "濾波Pitch" 的對比
-	                            printf("Raw_P: %6.1f | Filtered_P: %6.1f | K: %.3f\r\n", pitch, final_pitch, kf_pitch.k);
-	                            // 💡 確保在 while(1) 外面的 /* USER CODE BEGIN 0 */ 有宣告這個共用體：
-
-
-	                            // ... 在 while(1) 裡面，算出 final_pitch 之後 ...
-	                            // 🌟 新增：IMU 軟體歸零 (紀錄站直時的初始穿戴角度)
-	                            // 🌟 修正 2：IMU 暖機倒數計時器 (丟棄剛開機的不穩定雜訊)
-	                            static float pitch_offset = 0.0f;
-	                            static int is_pitch_offset_set = 0;
-	                            static int warmup_counter = 0; // 暖機計數器
-	                            float relative_pitch = 0.0f;
-
-	                            if (is_pitch_offset_set == 0) {
-	                                warmup_counter++;
-	                                if (warmup_counter > 100) { // 等待大約 1~2 秒讓感測器完全冷靜
-	                                    pitch_offset = final_pitch;
-	                                    is_pitch_offset_set = 1;
-	                                    printf("✅ IMU Ready & Zero Point Locked!\r\n");
-	                                }
-	                                relative_pitch = 0.0f; // 暖機期間，強制輸出 0 度，馬達絕對不動
-	                            } else {
-	                                relative_pitch = final_pitch - pitch_offset;
-	                            }
-
-	                            // 🌟 核心架構升級：刪除所有 X/Y 座標轉換與死區！
-	                            	                            // 大腦板的工作簡化為「純淨感測」，把最真實的角度直接傳給小腦板的狀態機。
-	                            	                            float pitch_to_send = relative_pitch;  // 取出歸零後的真實彎腰角度
-	                            	                            float roll_to_send  = final_roll;      // 取出 Roll 角度 (備用)
-
-	                            	                            // 2. 打包成 13 個 Bytes 的軍規級封包 (Header + 狀態 + Pitch + Roll + Tail)
-	                            	                            uint8_t tx_buffer[13];
-
-	                            	                            // 標頭與狀態碼
-	                            	                            tx_buffer[0] = 0xAA;
-	                            	                            tx_buffer[1] = 0x55;
-	                            	                            tx_buffer[2] = (uint8_t)is_pitch_offset_set; // 1 代表感測器已歸零準備就緒
-
-	                            	                            // 🌟 打包 Pitch 角度 (放入原本 X 的 3~6 號位置)
-	                            	                            data_converter.fval = pitch_to_send;
-	                            	                            tx_buffer[3] = data_converter.bytes[0];
-	                            	                            tx_buffer[4] = data_converter.bytes[1];
-	                            	                            tx_buffer[5] = data_converter.bytes[2];
-	                            	                            tx_buffer[6] = data_converter.bytes[3];
-
-	                            	                            // 🌟 打包 Roll 角度 (放入原本 Y 的 7~10 號位置)
-	                            	                            data_converter.fval = roll_to_send;
-	                            	                            tx_buffer[7] = data_converter.bytes[0];
-	                            	                            tx_buffer[8] = data_converter.bytes[1];
-	                            	                            tx_buffer[9] = data_converter.bytes[2];
-	                            	                            tx_buffer[10] = data_converter.bytes[3];
-
-	                            // 🌟 加上封包結尾
-	                            tx_buffer[11] = 0x0D; // \r
-	                            tx_buffer[12] = 0x0A; // \n
-
-	                            // 3. 透過 USART3 傳送 13 個 Byte
-	                            HAL_UART_Transmit(&huart3, tx_buffer, 13, 10);
-	                        }
-	                    }
-	                }
-	            }
-	        }
+      // 掃描測試階段，迴圈留空即可
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -376,7 +160,7 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -384,8 +168,21 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 180;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -394,12 +191,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
   }
@@ -412,14 +209,6 @@ void SystemClock_Config(void)
   */
 static void MX_I2C1_Init(void)
 {
-
-  /* USER CODE BEGIN I2C1_Init 0 */
-
-  /* USER CODE END I2C1_Init 0 */
-
-  /* USER CODE BEGIN I2C1_Init 1 */
-
-  /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
@@ -433,10 +222,6 @@ static void MX_I2C1_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
-
 }
 
 /**
@@ -446,14 +231,6 @@ static void MX_I2C1_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -466,10 +243,6 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
@@ -479,14 +252,6 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_USART3_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART3_Init 0 */
-
-  /* USER CODE END USART3_Init 0 */
-
-  /* USER CODE BEGIN USART3_Init 1 */
-
-  /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
   huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
@@ -499,10 +264,6 @@ static void MX_USART3_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART3_Init 2 */
-
-  /* USER CODE END USART3_Init 2 */
-
 }
 
 /**
@@ -513,9 +274,6 @@ static void MX_USART3_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -537,15 +295,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
-
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -553,27 +303,15 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
-#ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+
+#ifdef  USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+

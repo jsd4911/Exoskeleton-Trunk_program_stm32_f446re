@@ -3,11 +3,11 @@ import time
 import csv
 
 # --- 設定通訊埠 (請修改為您的 COM Port) ---
-SERIAL_PORT = 'COM3'
+SERIAL_PORT = 'COM8'
 BAUD_RATE = 115200
 
 # 設定輸出的檔案名稱 (自動加上 Delta 標記與時間)
-filename = time.strftime("V7-1_BNO085_Move_%Y%m%d_%H%M%S.csv")
+filename = time.strftime("N6_BNO085csv/N6_BNO085_bend down_%Y%m%d_%H%M%S.csv")
 
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)

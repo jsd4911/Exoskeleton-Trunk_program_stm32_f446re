@@ -2,7 +2,7 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
+  * @brief          : AK45-36 formal bench-safe position controller
   ******************************************************************************
   * @attention
   *
@@ -26,50 +26,88 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum
-{
-  AK45_REQUEST_NONE = 0U,
-  AK45_REQUEST_DISABLE = 1U,
-  AK45_REQUEST_SAFE_HANDSHAKE = 2U,
-  AK45_REQUEST_MOVE_PLUS_0P10_RAD = 3U,
-  AK45_REQUEST_MOVE_ZERO_RAD = 4U
-} AK45_RequestTypeDef;
 
 typedef enum
 {
-  AK45_SEQUENCE_IDLE = 0U,
-  AK45_SEQUENCE_WAIT_ZERO_COMMAND = 1U,
-  AK45_SEQUENCE_WAIT_MOTION_COMMAND = 2U,
-  AK45_SEQUENCE_WAIT_AUTO_DISABLE = 3U
-} AK45_SequenceTypeDef;
+  AK45_COMMAND_NONE = 0U,
+  AK45_COMMAND_ENABLE = 1U,
+  AK45_COMMAND_STOP = 2U,
+  AK45_COMMAND_CLEAR_FAULT = 3U
+} AK45_CommandTypeDef;
+
+typedef enum
+{
+  AK45_STATE_READY = 0U,
+  AK45_STATE_WAIT_ENTER_REPLY = 1U,
+  AK45_STATE_ACTIVE = 2U,
+  AK45_STATE_FAULT = 3U
+} AK45_StateTypeDef;
+
+typedef enum
+{
+  AK45_FAULT_NONE = 0U,
+  AK45_FAULT_TX = 1U,
+  AK45_FAULT_ENTER_TIMEOUT = 2U,
+  AK45_FAULT_FEEDBACK_TIMEOUT = 3U,
+  AK45_FAULT_MOTOR = 4U,
+  AK45_FAULT_CAN_WARNING = 5U,
+  AK45_FAULT_CAN_PASSIVE = 6U,
+  AK45_FAULT_CAN_BUS_OFF = 7U,
+  AK45_FAULT_START_POSITION_LIMIT = 8U,
+  AK45_FAULT_TARGET_LIMIT = 9U
+} AK45_FaultTypeDef;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define AK45_CAN_ID                     0x001U
 
-#define AK45_POSITION_MIN_RAD          (-12.5F)
-#define AK45_POSITION_MAX_RAD            12.5F
-#define AK45_VELOCITY_MIN_RAD_S         (-6.0F)
-#define AK45_VELOCITY_MAX_RAD_S           6.0F
-#define AK45_TORQUE_MIN_NM             (-34.0F)
-#define AK45_TORQUE_MAX_NM               34.0F
-#define AK45_KP_MIN                       0.0F
-#define AK45_KP_MAX                     500.0F
-#define AK45_KD_MIN                       0.0F
-#define AK45_KD_MAX                       5.0F
+#define AK45_CAN_ID                    0x001U
 
-/* Position commands require this one-time safety unlock key. */
-#define AK45_MOTION_UNLOCK_KEY         0xA4536001UL
+#define AK45_POSITION_MIN_RAD         (-12.5F)
+#define AK45_POSITION_MAX_RAD           12.5F
+#define AK45_VELOCITY_MIN_RAD_S        (-6.0F)
+#define AK45_VELOCITY_MAX_RAD_S          6.0F
+#define AK45_TORQUE_MIN_NM            (-34.0F)
+#define AK45_TORQUE_MAX_NM              34.0F
+#define AK45_KP_MIN                      0.0F
+#define AK45_KP_MAX                    500.0F
+#define AK45_KD_MIN                      0.0F
+#define AK45_KD_MAX                      5.0F
 
-/* Internal execution result codes; these are not CubeMars CAN commands. */
+/* One-shot key required for every ENABLE request. */
+#define AK45_CONTROL_UNLOCK_KEY        0xA4536001UL
+
+/* Bench-safe V1 limits. Re-evaluate before installing on an exoskeleton. */
+#define AK45_SAFE_POSITION_MIN_DEG   (-120.0F)
+#define AK45_SAFE_POSITION_MAX_DEG    120.0F
+#define AK45_CONTROL_PERIOD_MS          10U
+#define AK45_ENTER_TIMEOUT_MS          250U
+#define AK45_FEEDBACK_TIMEOUT_MS       100U
+#define AK45_DEFAULT_ACTIVE_MS       10000U
+#define AK45_ACTIVE_MIN_MS            1000U
+#define AK45_ACTIVE_MAX_MS           30000U
+#define AK45_DEFAULT_SLEW_DEG_S          5.0F
+#define AK45_SLEW_MIN_DEG_S              1.0F
+#define AK45_SLEW_MAX_DEG_S             20.0F
+#define AK45_SAFE_KP_MIN                 0.0F
+#define AK45_SAFE_KP_MAX                20.0F
+#define AK45_SAFE_KD_MIN                 0.05F
+#define AK45_SAFE_KD_MAX                 0.50F
+#define AK45_RAD_TO_DEG                 57.2957795131F
+#define AK45_DEG_TO_RAD                  0.01745329252F
+
 #define AK45_RESULT_READY              0x00000001UL
-#define AK45_RESULT_RUNNING            0x00000010UL
-#define AK45_RESULT_OK                 0x00000020UL
+#define AK45_RESULT_ENTERING           0x00000010UL
+#define AK45_RESULT_ACTIVE             0x00000020UL
+#define AK45_RESULT_STOPPED            0x00000030UL
+#define AK45_RESULT_AUTO_STOPPED       0x00000031UL
 #define AK45_RESULT_MOTION_LOCKED      0x000000E1UL
 #define AK45_RESULT_BUSY               0x000000E2UL
-#define AK45_RESULT_BAD_REQUEST        0x000000E3UL
-#define AK45_RESULT_TX_ERROR           0x000000E4UL
+#define AK45_RESULT_BAD_COMMAND        0x000000E3UL
+#define AK45_RESULT_BAD_PARAMETER      0x000000E4UL
+#define AK45_RESULT_FAULT              0x000000F0UL
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -92,7 +130,7 @@ static uint8_t can_rx_work_data[8];
 /*
  * Add these symbols to STM32CubeIDE Live Expressions while debugging.
  * The firmware never transmits at boot. A command is sent only after the user
- * writes a request value to ak45_request.
+ * writes the one-shot unlock key and AK45_COMMAND_ENABLE to ak45_command.
  */
 volatile uint32_t can_status = 0U;
 volatile uint32_t can_tx_count = 0U;
@@ -113,23 +151,45 @@ volatile uint32_t can_tx_error_counter = 0U;
 volatile uint32_t can_rx_error_counter = 0U;
 volatile uint8_t can_last_data[8] = {0U};
 
-/* User command and AK45-36 decoded feedback variables. */
-volatile uint32_t ak45_request = AK45_REQUEST_NONE;
-volatile uint32_t ak45_motion_unlock = 0U;
-volatile uint32_t ak45_last_request = AK45_REQUEST_NONE;
+/*
+ * Formal control mailbox for STM32CubeIDE Live Expressions.
+ * Write target and tuning values only while READY. Write the one-shot unlock
+ * key and then command ENABLE. STOP is accepted from every state.
+ */
+volatile uint32_t ak45_command = AK45_COMMAND_NONE;
+volatile uint32_t ak45_control_unlock = 0U;
+volatile uint32_t ak45_last_command = AK45_COMMAND_NONE;
 volatile uint32_t ak45_result = AK45_RESULT_READY;
-volatile uint32_t ak45_sequence = AK45_SEQUENCE_IDLE;
-volatile uint32_t ak45_enabled = 0U;
+volatile uint32_t ak45_state = AK45_STATE_READY;
+volatile uint32_t ak45_control_active = 0U;
+volatile uint32_t ak45_fault_code = AK45_FAULT_NONE;
+
+volatile float ak45_target_deg = 0.0F;
+volatile float ak45_commanded_deg = 0.0F;
+volatile float ak45_applied_target_deg = 0.0F;
+volatile float ak45_control_kp = 10.0F;
+volatile float ak45_control_kd = 0.10F;
+volatile float ak45_slew_rate_deg_s = AK45_DEFAULT_SLEW_DEG_S;
+volatile uint32_t ak45_max_active_ms = AK45_DEFAULT_ACTIVE_MS;
+volatile uint32_t ak45_active_elapsed_ms = 0U;
+volatile uint32_t ak45_feedback_age_ms = 0xFFFFFFFFUL;
+
+/* AK45-36 decoded feedback. */
 volatile uint32_t ak45_reply_count = 0U;
 volatile uint32_t ak45_reply_id = 0U;
 volatile uint32_t ak45_error_code = 0U;
 volatile float ak45_position_rad = 0.0F;
+volatile float ak45_position_deg = 0.0F;
 volatile float ak45_velocity_rad_s = 0.0F;
 volatile float ak45_torque_nm = 0.0F;
 volatile float ak45_temperature_c = 0.0F;
 
-static uint32_t ak45_sequence_deadline_ms = 0U;
-static float ak45_pending_position_rad = 0.0F;
+static uint32_t ak45_state_deadline_ms = 0U;
+static uint32_t ak45_next_control_ms = 0U;
+static uint32_t ak45_last_control_ms = 0U;
+static uint32_t ak45_active_start_ms = 0U;
+static uint32_t ak45_last_reply_ms = 0U;
+static uint32_t ak45_enter_reply_baseline = 0U;
 
 /* USER CODE END PV */
 
@@ -141,28 +201,30 @@ static void SystemIsolation_Config(void);
 
 static void FDCAN1_AK45_Init(void);
 static uint32_t FDCAN_DlcToBytes(uint32_t data_length);
-
 static uint32_t AK45_FloatToUInt(float value,
                                 float minimum,
                                 float maximum,
                                 uint32_t bits);
-
 static float AK45_UIntToFloat(uint32_t value,
-                             float minimum,
-                             float maximum,
-                             uint32_t bits);
-
+                              float minimum,
+                              float maximum,
+                              uint32_t bits);
 static HAL_StatusTypeDef AK45_SendRawFrame(const uint8_t data[8]);
 static HAL_StatusTypeDef AK45_SendSpecialCommand(uint8_t command);
-
 static HAL_StatusTypeDef AK45_SendMITCommand(float position_rad,
                                              float velocity_rad_s,
                                              float kp,
                                              float kd,
                                              float torque_nm);
-
 static void AK45_Service(void);
-static void AK45_FinishWithTxError(void);
+static float AK45_ClampFloat(float value, float minimum, float maximum);
+static uint32_t AK45_ClampUInt32(uint32_t value,
+                                uint32_t minimum,
+                                uint32_t maximum);
+static uint32_t AK45_PositionIsSafe(float position_deg);
+static void AK45_AbortPendingTx(void);
+static void AK45_Stop(uint32_t result);
+static void AK45_TripFault(uint32_t fault_code);
 static void AK45_DecodeReply(const uint8_t data[8]);
 static void FDCAN1_UpdateDiagnostics(void);
 
@@ -188,6 +250,11 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+
+  /*
+   * Appli.elf can be debugged without running the FSBL first. Explicitly
+   * enable the 48 MHz HSE used by FDCAN1 so CCCR.INIT can clear reliably.
+   */
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
 
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
@@ -201,6 +268,7 @@ int main(void)
   {
     Error_Handler();
   }
+
   /* USER CODE END Init */
 
   /* USER CODE BEGIN SysInit */
@@ -213,7 +281,7 @@ int main(void)
   SystemIsolation_Config();
   /* USER CODE BEGIN 2 */
 
-  /* Start FDCAN1. No CAN message is transmitted until ak45_request is set. */
+  /* Start FDCAN1. No CAN message is transmitted until explicitly enabled. */
   FDCAN1_AK45_Init();
 
   /* USER CODE END 2 */
@@ -225,7 +293,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  AK45_Service();
+    AK45_Service();
   }
   /* USER CODE END 3 */
 }
@@ -375,10 +443,10 @@ static uint32_t FDCAN_DlcToBytes(uint32_t data_length)
 }
 
 /**
-  * @brief  Configure and start FDCAN1 for the AK45-36 MIT protocol.
-  * @note   Accepts every 11-bit standard identifier (0x000 to 0x7FF).
-  * @retval None
-  */
+ * @brief  Configure and start FDCAN1 for the AK45-36 MIT protocol.
+ * @note   Accepts only the verified AK45-36 standard identifier (ID 1).
+ * @retval None
+ */
 static void FDCAN1_AK45_Init(void)
 {
   FDCAN_FilterTypeDef filter = {0};
@@ -389,8 +457,8 @@ static void FDCAN1_AK45_Init(void)
   filter.FilterIndex = 0U;
   filter.FilterType = FDCAN_FILTER_RANGE;
   filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  filter.FilterID1 = 0x000U;
-  filter.FilterID2 = 0x7FFU;
+  filter.FilterID1 = AK45_CAN_ID;
+  filter.FilterID2 = AK45_CAN_ID;
 
   if (HAL_FDCAN_ConfigFilter(&hfdcan1, &filter) != HAL_OK)
   {
@@ -472,15 +540,16 @@ static uint32_t AK45_FloatToUInt(float value,
   * @brief  Convert an unsigned MIT bit field back to a floating-point value.
   */
 static float AK45_UIntToFloat(uint32_t value,
-                             float minimum,
-                             float maximum,
-                             uint32_t bits)
+                              float minimum,
+                              float maximum,
+                              uint32_t bits)
 {
   uint32_t maximum_integer = (1UL << bits) - 1UL;
 
   return ((float)value * (maximum - minimum) /
           (float)maximum_integer) + minimum;
 }
+
 /**
   * @brief  Queue one Classic CAN data frame for motor ID 1.
   */
@@ -510,6 +579,7 @@ static HAL_StatusTypeDef AK45_SendRawFrame(const uint8_t data[8])
   FDCAN1_UpdateDiagnostics();
   return status;
 }
+
 /**
   * @brief Send an AK45-36 MIT special command.
   * @param command 0xFC enter, 0xFD exit, 0xFE set origin.
@@ -521,6 +591,7 @@ static HAL_StatusTypeDef AK45_SendSpecialCommand(uint8_t command)
 
   return AK45_SendRawFrame(data);
 }
+
 /**
   * @brief Pack and send one AK45-36 MIT command.
   * @note  AK45-36 ranges from CubeMars AK 2.0 Driver Manual V1.0.18:
@@ -544,22 +615,12 @@ static HAL_StatusTypeDef AK45_SendMITCommand(float position_rad,
                                       AK45_POSITION_MIN_RAD,
                                       AK45_POSITION_MAX_RAD,
                                       16U);
-
   velocity_integer = AK45_FloatToUInt(velocity_rad_s,
                                       AK45_VELOCITY_MIN_RAD_S,
                                       AK45_VELOCITY_MAX_RAD_S,
                                       12U);
-
-  kp_integer = AK45_FloatToUInt(kp,
-                                AK45_KP_MIN,
-                                AK45_KP_MAX,
-                                12U);
-
-  kd_integer = AK45_FloatToUInt(kd,
-                                AK45_KD_MIN,
-                                AK45_KD_MAX,
-                                12U);
-
+  kp_integer = AK45_FloatToUInt(kp, AK45_KP_MIN, AK45_KP_MAX, 12U);
+  kd_integer = AK45_FloatToUInt(kd, AK45_KD_MIN, AK45_KD_MAX, 12U);
   torque_integer = AK45_FloatToUInt(torque_nm,
                                     AK45_TORQUE_MIN_NM,
                                     AK45_TORQUE_MAX_NM,
@@ -578,26 +639,154 @@ static HAL_StatusTypeDef AK45_SendMITCommand(float position_rad,
 
   return AK45_SendRawFrame(data);
 }
+
 /**
-  * @brief  Mark a sequence failed and make one best-effort disable attempt.
+  * @brief Clamp a floating-point value to a closed interval.
+  * @note  The first comparison also maps NaN to the safe minimum.
   */
-static void AK45_FinishWithTxError(void)
+static float AK45_ClampFloat(float value, float minimum, float maximum)
 {
-  (void)AK45_SendSpecialCommand(0xFDU);
-  ak45_enabled = 0U;
-  ak45_sequence = AK45_SEQUENCE_IDLE;
-  ak45_motion_unlock = 0U;
-  ak45_result = AK45_RESULT_TX_ERROR;
+  if (!(value >= minimum))
+  {
+    return minimum;
+  }
+  if (value > maximum)
+  {
+    return maximum;
+  }
+  return value;
 }
+
 /**
-  * @brief Run user-triggered AK45-36 command sequences without boot motion.
-  * @note  Request 1 always aborts the active sequence and sends MIT EXIT.
+  * @brief Clamp an unsigned value to a closed interval.
+  */
+static uint32_t AK45_ClampUInt32(uint32_t value,
+                                uint32_t minimum,
+                                uint32_t maximum)
+{
+  if (value < minimum)
+  {
+    return minimum;
+  }
+  if (value > maximum)
+  {
+    return maximum;
+  }
+  return value;
+}
+
+/**
+  * @brief Return 1 only when a position is finite and inside the V1 limit.
+  */
+static uint32_t AK45_PositionIsSafe(float position_deg)
+{
+  return ((position_deg >= AK45_SAFE_POSITION_MIN_DEG) &&
+          (position_deg <= AK45_SAFE_POSITION_MAX_DEG)) ? 1U : 0U;
+}
+
+/**
+  * @brief Cancel any unsent/retransmitting frames in the three-element FIFO.
+  */
+static void AK45_AbortPendingTx(void)
+{
+  (void)HAL_FDCAN_AbortTxRequest(&hfdcan1,
+                                 FDCAN_TX_BUFFER0 |
+                                 FDCAN_TX_BUFFER1 |
+                                 FDCAN_TX_BUFFER2);
+}
+
+/**
+  * @brief Leave MIT mode and return to READY after a normal stop.
+  */
+static void AK45_Stop(uint32_t result)
+{
+  AK45_AbortPendingTx();
+  ak45_control_active = 0U;
+  ak45_control_unlock = 0U;
+  FDCAN1_UpdateDiagnostics();
+
+  /* Bus-off means EXIT cannot be delivered; never report a normal stop. */
+  if (can_protocol_bus_off != 0U)
+  {
+    ak45_state = AK45_STATE_FAULT;
+    ak45_fault_code = AK45_FAULT_CAN_BUS_OFF;
+    ak45_result = AK45_RESULT_FAULT;
+    return;
+  }
+
+  if (AK45_SendSpecialCommand(0xFDU) != HAL_OK)
+  {
+    ak45_state = AK45_STATE_FAULT;
+    ak45_fault_code = AK45_FAULT_TX;
+    ak45_result = AK45_RESULT_FAULT;
+    return;
+  }
+
+  /* Do not claim READY if the bus became unhealthy during the EXIT frame. */
+  FDCAN1_UpdateDiagnostics();
+  if (can_protocol_bus_off != 0U)
+  {
+    ak45_state = AK45_STATE_FAULT;
+    ak45_fault_code = AK45_FAULT_CAN_BUS_OFF;
+    ak45_result = AK45_RESULT_FAULT;
+    return;
+  }
+  if (can_protocol_error_passive != 0U)
+  {
+    ak45_state = AK45_STATE_FAULT;
+    ak45_fault_code = AK45_FAULT_CAN_PASSIVE;
+    ak45_result = AK45_RESULT_FAULT;
+    return;
+  }
+  if (can_protocol_warning != 0U)
+  {
+    ak45_state = AK45_STATE_FAULT;
+    ak45_fault_code = AK45_FAULT_CAN_WARNING;
+    ak45_result = AK45_RESULT_FAULT;
+    return;
+  }
+
+  ak45_state = AK45_STATE_READY;
+  ak45_fault_code = AK45_FAULT_NONE;
+  ak45_active_elapsed_ms = 0U;
+  ak45_result = result;
+}
+
+/**
+  * @brief Enter the latched FAULT state and make one best-effort MIT EXIT.
+  */
+static void AK45_TripFault(uint32_t fault_code)
+{
+  AK45_AbortPendingTx();
+  if (can_protocol_bus_off == 0U)
+  {
+    (void)AK45_SendSpecialCommand(0xFDU);
+  }
+
+  ak45_control_active = 0U;
+  ak45_control_unlock = 0U;
+  ak45_state = AK45_STATE_FAULT;
+  ak45_fault_code = fault_code;
+  ak45_result = AK45_RESULT_FAULT;
+}
+
+/**
+  * @brief Service the formal bench-safe AK45-36 position controller.
+  * @note  ENABLE enters MIT mode, waits for a verified reply, then begins a
+  *        100 Hz slew-limited position loop. STOP is accepted from any state.
   */
 static void AK45_Service(void)
 {
   static uint32_t diagnostics_deadline_ms = 0U;
   uint32_t now_ms = HAL_GetTick();
-  uint32_t request;
+  uint32_t command;
+  uint32_t elapsed_ms;
+  float target_deg;
+  float kp;
+  float kd;
+  float slew_deg_s;
+  float maximum_step_deg;
+  float position_error_deg;
 
   if ((int32_t)(now_ms - diagnostics_deadline_ms) >= 0)
   {
@@ -605,151 +794,309 @@ static void AK45_Service(void)
     diagnostics_deadline_ms = now_ms + 100U;
   }
 
-  /* Request 1 immediately aborts and disables the motor. */
-  if (ak45_request == AK45_REQUEST_DISABLE)
+  if (ak45_reply_count == 0U)
   {
-    ak45_request = AK45_REQUEST_NONE;
-    ak45_last_request = AK45_REQUEST_DISABLE;
-    ak45_sequence = AK45_SEQUENCE_IDLE;
-    ak45_motion_unlock = 0U;
-    ak45_result = AK45_RESULT_RUNNING;
+    ak45_feedback_age_ms = 0xFFFFFFFFUL;
+  }
+  else
+  {
+    ak45_feedback_age_ms = now_ms - ak45_last_reply_ms;
+  }
 
-    if (AK45_SendSpecialCommand(0xFDU) == HAL_OK)
+  /* STOP always has priority. A latched fault still requires CLEAR_FAULT. */
+  if (ak45_command == AK45_COMMAND_STOP)
+  {
+    ak45_command = AK45_COMMAND_NONE;
+    ak45_last_command = AK45_COMMAND_STOP;
+
+    if (ak45_state == AK45_STATE_FAULT)
     {
-      ak45_enabled = 0U;
-      ak45_result = AK45_RESULT_OK;
+      AK45_AbortPendingTx();
+      if (can_protocol_bus_off == 0U)
+      {
+        (void)AK45_SendSpecialCommand(0xFDU);
+      }
+      ak45_control_active = 0U;
+      ak45_control_unlock = 0U;
+      ak45_result = AK45_RESULT_FAULT;
     }
     else
     {
-      AK45_FinishWithTxError();
+      AK45_Stop(AK45_RESULT_STOPPED);
     }
-
     return;
   }
 
-  if (ak45_sequence == AK45_SEQUENCE_IDLE)
+  /* A CAN health fault is fatal only while entering or actively controlling. */
+  if ((ak45_state == AK45_STATE_WAIT_ENTER_REPLY) ||
+      (ak45_state == AK45_STATE_ACTIVE))
   {
-    request = ak45_request;
-
-    if (request == AK45_REQUEST_NONE)
+    if (can_protocol_bus_off != 0U)
     {
+      AK45_TripFault(AK45_FAULT_CAN_BUS_OFF);
       return;
     }
-
-    ak45_request = AK45_REQUEST_NONE;
-    ak45_last_request = request;
-    ak45_result = AK45_RESULT_RUNNING;
-
-    if (request == AK45_REQUEST_SAFE_HANDSHAKE)
+    if (can_protocol_error_passive != 0U)
     {
-      if (AK45_SendSpecialCommand(0xFCU) != HAL_OK)
-      {
-        AK45_FinishWithTxError();
-        return;
-      }
-
-      ak45_enabled = 1U;
-      ak45_sequence_deadline_ms = now_ms + 20U;
-      ak45_sequence = AK45_SEQUENCE_WAIT_ZERO_COMMAND;
+      AK45_TripFault(AK45_FAULT_CAN_PASSIVE);
       return;
     }
-
-    if ((request == AK45_REQUEST_MOVE_PLUS_0P10_RAD) ||
-        (request == AK45_REQUEST_MOVE_ZERO_RAD))
+    if (can_protocol_warning != 0U)
     {
-      if (ak45_motion_unlock != AK45_MOTION_UNLOCK_KEY)
-      {
-        ak45_motion_unlock = 0U;
-        ak45_result = AK45_RESULT_MOTION_LOCKED;
-        return;
-      }
-
-      ak45_pending_position_rad =
-        (request == AK45_REQUEST_MOVE_PLUS_0P10_RAD) ? 0.10F : 0.0F;
-
-      if (AK45_SendSpecialCommand(0xFCU) != HAL_OK)
-      {
-        AK45_FinishWithTxError();
-        return;
-      }
-
-      ak45_enabled = 1U;
-      ak45_sequence_deadline_ms = now_ms + 20U;
-      ak45_sequence = AK45_SEQUENCE_WAIT_MOTION_COMMAND;
+      AK45_TripFault(AK45_FAULT_CAN_WARNING);
       return;
     }
+  }
 
-    ak45_result = AK45_RESULT_BAD_REQUEST;
+  command = ak45_command;
+
+  if (command == AK45_COMMAND_CLEAR_FAULT)
+  {
+    ak45_command = AK45_COMMAND_NONE;
+    ak45_last_command = AK45_COMMAND_CLEAR_FAULT;
+
+    FDCAN1_UpdateDiagnostics();
+    if ((ak45_state == AK45_STATE_FAULT) &&
+        (can_protocol_bus_off == 0U) &&
+        (can_protocol_error_passive == 0U) &&
+        (can_protocol_warning == 0U))
+    {
+      /* The next ENABLE must obtain a fresh reply before torque is applied. */
+      ak45_error_code = 0U;
+      ak45_feedback_age_ms = 0xFFFFFFFFUL;
+      ak45_control_active = 0U;
+      ak45_control_unlock = 0U;
+      ak45_fault_code = AK45_FAULT_NONE;
+      ak45_state = AK45_STATE_READY;
+      ak45_result = AK45_RESULT_READY;
+    }
+    else
+    {
+      ak45_result = AK45_RESULT_BUSY;
+    }
     return;
   }
 
-  /* Reject another non-disable request while a sequence is running. */
-  if (ak45_request != AK45_REQUEST_NONE)
+  if (ak45_state == AK45_STATE_FAULT)
   {
-    ak45_request = AK45_REQUEST_NONE;
+    if (command != AK45_COMMAND_NONE)
+    {
+      ak45_command = AK45_COMMAND_NONE;
+      ak45_last_command = command;
+      ak45_result = AK45_RESULT_BUSY;
+    }
+    return;
+  }
+
+  if (ak45_state == AK45_STATE_READY)
+  {
+    if (command == AK45_COMMAND_NONE)
+    {
+      return;
+    }
+
+    ak45_command = AK45_COMMAND_NONE;
+    ak45_last_command = command;
+
+    if (command != AK45_COMMAND_ENABLE)
+    {
+      ak45_result = AK45_RESULT_BAD_COMMAND;
+      return;
+    }
+
+    if (ak45_control_unlock != AK45_CONTROL_UNLOCK_KEY)
+    {
+      ak45_control_unlock = 0U;
+      ak45_result = AK45_RESULT_MOTION_LOCKED;
+      return;
+    }
+    ak45_control_unlock = 0U;
+
+    target_deg = ak45_target_deg;
+    if (AK45_PositionIsSafe(target_deg) == 0U)
+    {
+      ak45_result = AK45_RESULT_BAD_PARAMETER;
+      return;
+    }
+
+    /* Clamp tuning to the deliberately conservative V1 operating envelope. */
+    ak45_control_kp = AK45_ClampFloat(ak45_control_kp,
+                                      AK45_SAFE_KP_MIN,
+                                      AK45_SAFE_KP_MAX);
+    ak45_control_kd = AK45_ClampFloat(ak45_control_kd,
+                                      AK45_SAFE_KD_MIN,
+                                      AK45_SAFE_KD_MAX);
+    ak45_slew_rate_deg_s = AK45_ClampFloat(ak45_slew_rate_deg_s,
+                                           AK45_SLEW_MIN_DEG_S,
+                                           AK45_SLEW_MAX_DEG_S);
+    ak45_max_active_ms = AK45_ClampUInt32(ak45_max_active_ms,
+                                          AK45_ACTIVE_MIN_MS,
+                                          AK45_ACTIVE_MAX_MS);
+    ak45_applied_target_deg = target_deg;
+    ak45_fault_code = AK45_FAULT_NONE;
+    ak45_active_elapsed_ms = 0U;
+
+    FDCAN1_UpdateDiagnostics();
+    if (can_protocol_bus_off != 0U)
+    {
+      AK45_TripFault(AK45_FAULT_CAN_BUS_OFF);
+      return;
+    }
+    if (can_protocol_error_passive != 0U)
+    {
+      AK45_TripFault(AK45_FAULT_CAN_PASSIVE);
+      return;
+    }
+    if (can_protocol_warning != 0U)
+    {
+      AK45_TripFault(AK45_FAULT_CAN_WARNING);
+      return;
+    }
+
+    AK45_AbortPendingTx();
+    ak45_enter_reply_baseline = ak45_reply_count;
+    if (AK45_SendSpecialCommand(0xFCU) != HAL_OK)
+    {
+      AK45_TripFault(AK45_FAULT_TX);
+      return;
+    }
+
+    ak45_state_deadline_ms = now_ms + AK45_ENTER_TIMEOUT_MS;
+    ak45_state = AK45_STATE_WAIT_ENTER_REPLY;
+    ak45_result = AK45_RESULT_ENTERING;
+    return;
+  }
+
+  /* Only STOP is accepted while entering or actively controlling. */
+  if (command != AK45_COMMAND_NONE)
+  {
+    ak45_command = AK45_COMMAND_NONE;
+    ak45_last_command = command;
     ak45_result = AK45_RESULT_BUSY;
   }
 
-  if ((int32_t)(now_ms - ak45_sequence_deadline_ms) < 0)
+  if (ak45_state == AK45_STATE_WAIT_ENTER_REPLY)
+  {
+    if (ak45_reply_count != ak45_enter_reply_baseline)
+    {
+      if (ak45_error_code != 0U)
+      {
+        AK45_TripFault(AK45_FAULT_MOTOR);
+        return;
+      }
+      if (AK45_PositionIsSafe(ak45_position_deg) == 0U)
+      {
+        AK45_TripFault(AK45_FAULT_START_POSITION_LIMIT);
+        return;
+      }
+
+      /* Start from measured position so ENABLE itself cannot cause a jump. */
+      ak45_commanded_deg = ak45_position_deg;
+      ak45_active_start_ms = now_ms;
+      ak45_last_control_ms = now_ms;
+      ak45_next_control_ms = now_ms;
+      ak45_active_elapsed_ms = 0U;
+      ak45_control_active = 1U;
+      ak45_state = AK45_STATE_ACTIVE;
+      ak45_result = AK45_RESULT_ACTIVE;
+      return;
+    }
+
+    if ((int32_t)(now_ms - ak45_state_deadline_ms) >= 0)
+    {
+      AK45_TripFault(AK45_FAULT_ENTER_TIMEOUT);
+    }
+    return;
+  }
+
+  if (ak45_state != AK45_STATE_ACTIVE)
   {
     return;
   }
 
-  if (ak45_sequence == AK45_SEQUENCE_WAIT_ZERO_COMMAND)
+  ak45_max_active_ms = AK45_ClampUInt32(ak45_max_active_ms,
+                                        AK45_ACTIVE_MIN_MS,
+                                        AK45_ACTIVE_MAX_MS);
+  ak45_active_elapsed_ms = now_ms - ak45_active_start_ms;
+  if (ak45_active_elapsed_ms >= ak45_max_active_ms)
   {
-    /*
-     * Kp, Kd and torque are all zero.
-     * This requests feedback without commanding motor torque.
-     */
-    if (AK45_SendMITCommand(0.0F,
-                            0.0F,
-                            0.0F,
-                            0.0F,
-                            0.0F) != HAL_OK)
-    {
-      AK45_FinishWithTxError();
-      return;
-    }
-
-    ak45_sequence_deadline_ms = now_ms + 200U;
-    ak45_sequence = AK45_SEQUENCE_WAIT_AUTO_DISABLE;
+    AK45_Stop(AK45_RESULT_AUTO_STOPPED);
     return;
   }
 
-  if (ak45_sequence == AK45_SEQUENCE_WAIT_MOTION_COMMAND)
+  if (ak45_feedback_age_ms > AK45_FEEDBACK_TIMEOUT_MS)
   {
-    if (AK45_SendMITCommand(ak45_pending_position_rad,
-                            0.0F,
-                            10.0F,
-                            0.10F,
-                            0.0F) != HAL_OK)
-    {
-      AK45_FinishWithTxError();
-      return;
-    }
-
-    /* Automatically exit MIT mode after the short position test. */
-    ak45_sequence_deadline_ms = now_ms + 800U;
-    ak45_sequence = AK45_SEQUENCE_WAIT_AUTO_DISABLE;
+    AK45_TripFault(AK45_FAULT_FEEDBACK_TIMEOUT);
     return;
   }
 
-  if (ak45_sequence == AK45_SEQUENCE_WAIT_AUTO_DISABLE)
+  if (ak45_error_code != 0U)
   {
-    if (AK45_SendSpecialCommand(0xFDU) != HAL_OK)
-    {
-      AK45_FinishWithTxError();
-      return;
-    }
+    AK45_TripFault(AK45_FAULT_MOTOR);
+    return;
+  }
 
-    ak45_enabled = 0U;
-    ak45_sequence = AK45_SEQUENCE_IDLE;
-    ak45_motion_unlock = 0U;
-    ak45_result = AK45_RESULT_OK;
+  target_deg = ak45_target_deg;
+  if (AK45_PositionIsSafe(target_deg) == 0U)
+  {
+    AK45_TripFault(AK45_FAULT_TARGET_LIMIT);
+    return;
+  }
+  ak45_applied_target_deg = target_deg;
+
+  if ((int32_t)(now_ms - ak45_next_control_ms) < 0)
+  {
+    return;
+  }
+
+  elapsed_ms = now_ms - ak45_last_control_ms;
+  if ((elapsed_ms == 0U) || (elapsed_ms > 50U))
+  {
+    elapsed_ms = AK45_CONTROL_PERIOD_MS;
+  }
+  ak45_last_control_ms = now_ms;
+  ak45_next_control_ms = now_ms + AK45_CONTROL_PERIOD_MS;
+
+  kp = AK45_ClampFloat(ak45_control_kp,
+                        AK45_SAFE_KP_MIN,
+                        AK45_SAFE_KP_MAX);
+  kd = AK45_ClampFloat(ak45_control_kd,
+                        AK45_SAFE_KD_MIN,
+                        AK45_SAFE_KD_MAX);
+  slew_deg_s = AK45_ClampFloat(ak45_slew_rate_deg_s,
+                                AK45_SLEW_MIN_DEG_S,
+                                AK45_SLEW_MAX_DEG_S);
+  ak45_control_kp = kp;
+  ak45_control_kd = kd;
+  ak45_slew_rate_deg_s = slew_deg_s;
+
+  maximum_step_deg = slew_deg_s * ((float)elapsed_ms / 1000.0F);
+  position_error_deg = target_deg - ak45_commanded_deg;
+  if (position_error_deg > maximum_step_deg)
+  {
+    ak45_commanded_deg += maximum_step_deg;
+  }
+  else if (position_error_deg < -maximum_step_deg)
+  {
+    ak45_commanded_deg -= maximum_step_deg;
+  }
+  else
+  {
+    ak45_commanded_deg = target_deg;
+  }
+
+  if (AK45_SendMITCommand(ak45_commanded_deg * AK45_DEG_TO_RAD,
+                          0.0F,
+                          kp,
+                          kd,
+                          0.0F) != HAL_OK)
+  {
+    AK45_TripFault(AK45_FAULT_TX);
   }
 }
+
 /**
-  * @brief Decode one 8-byte AK45-36 MIT reply.
+  * @brief Decode the AK45-36 standard 8-byte MIT feedback payload.
   */
 static void AK45_DecodeReply(const uint8_t data[8])
 {
@@ -757,14 +1104,15 @@ static void AK45_DecodeReply(const uint8_t data[8])
   uint32_t velocity_integer;
   uint32_t torque_integer;
 
-  ak45_reply_id = (uint32_t)data[0];
+  ak45_reply_id = data[0];
+  if (ak45_reply_id != AK45_CAN_ID)
+  {
+    return;
+  }
 
-  position_integer = ((uint32_t)data[1] << 8) |
-                     (uint32_t)data[2];
-
+  position_integer = ((uint32_t)data[1] << 8) | (uint32_t)data[2];
   velocity_integer = ((uint32_t)data[3] << 4) |
                      ((uint32_t)data[4] >> 4);
-
   torque_integer = (((uint32_t)data[4] & 0x0FU) << 8) |
                    (uint32_t)data[5];
 
@@ -772,21 +1120,21 @@ static void AK45_DecodeReply(const uint8_t data[8])
                                        AK45_POSITION_MIN_RAD,
                                        AK45_POSITION_MAX_RAD,
                                        16U);
-
+  ak45_position_deg = ak45_position_rad * AK45_RAD_TO_DEG;
   ak45_velocity_rad_s = AK45_UIntToFloat(velocity_integer,
                                          AK45_VELOCITY_MIN_RAD_S,
                                          AK45_VELOCITY_MAX_RAD_S,
                                          12U);
-
   ak45_torque_nm = AK45_UIntToFloat(torque_integer,
-                                     AK45_TORQUE_MIN_NM,
-                                     AK45_TORQUE_MAX_NM,
-                                     12U);
-
-  ak45_temperature_c = (float)data[6] - 40.0F;
-  ak45_error_code = (uint32_t)data[7];
+                                    AK45_TORQUE_MIN_NM,
+                                    AK45_TORQUE_MAX_NM,
+                                    12U);
+  ak45_temperature_c = (float)((int32_t)data[6] - 40);
+  ak45_error_code = data[7];
+  ak45_last_reply_ms = HAL_GetTick();
   ak45_reply_count++;
 }
+
 /**
   * @brief Copy FDCAN health fields into debugger-visible variables.
   */
@@ -798,8 +1146,7 @@ static void FDCAN1_UpdateDiagnostics(void)
   can_tx_fifo_free = HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1);
   can_last_hal_error = HAL_FDCAN_GetError(&hfdcan1);
 
-  if (HAL_FDCAN_GetProtocolStatus(&hfdcan1,
-                                  &protocol_status) == HAL_OK)
+  if (HAL_FDCAN_GetProtocolStatus(&hfdcan1, &protocol_status) == HAL_OK)
   {
     can_protocol_last_error = protocol_status.LastErrorCode;
     can_protocol_activity = protocol_status.Activity;
@@ -808,13 +1155,13 @@ static void FDCAN1_UpdateDiagnostics(void)
     can_protocol_bus_off = protocol_status.BusOff;
   }
 
-  if (HAL_FDCAN_GetErrorCounters(&hfdcan1,
-                                 &error_counters) == HAL_OK)
+  if (HAL_FDCAN_GetErrorCounters(&hfdcan1, &error_counters) == HAL_OK)
   {
     can_tx_error_counter = error_counters.TxErrorCnt;
     can_rx_error_counter = error_counters.RxErrorCnt;
   }
 }
+
 /**
   * @brief  FDCAN FIFO0 receive callback.
   * @param  hfdcan FDCAN handle that generated the interrupt.
@@ -858,10 +1205,6 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
     can_last_data[index] = can_rx_work_data[index];
   }
 
-  /*
-   * Decode only a complete AK45-36 MIT reply.
-   * The arbitration ID and data byte 0 must both identify motor 1.
-   */
   if ((can_rx_header.IdType == FDCAN_STANDARD_ID) &&
       (can_rx_header.RxFrameType == FDCAN_DATA_FRAME) &&
       (can_rx_header.Identifier == AK45_CAN_ID) &&
